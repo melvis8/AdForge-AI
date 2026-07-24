@@ -16,3 +16,6 @@ web-build/
 
 # Prisma / Logs
 *.log
+
+# Uploads
+backend/uploads/

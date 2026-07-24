@@ -6,6 +6,7 @@ import { getCampaign } from '../services/api.service';
 import { saveCampaignOffline } from '../services/offline.service';
 import { Video, ResizeMode } from 'expo-av';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Result'>;
@@ -83,15 +84,25 @@ export default function ResultScreen({ route, navigation }: Props) {
         return;
       }
       
-      // We share a composite message containing text and link to video
-      // For images/videos, we would normally download them to file system first
-      // But for quick text-based intent:
-      await Sharing.shareAsync(campaign.video || campaign.poster, {
+      const mediaUrl = campaign.video || campaign.poster || campaign?.generated?.find((f: any) => f.type === 'video')?.url || campaign?.generated?.find((f: any) => f.type === 'poster')?.url;
+      if (!mediaUrl) {
+        alert("No media available to share.");
+        return;
+      }
+
+      setLoading(true);
+      const fileExt = mediaUrl.includes('.mp4') ? '.mp4' : '.jpg';
+      const fileUri = FileSystem.cacheDirectory + 'adforge_share' + fileExt;
+      const { uri } = await FileSystem.downloadAsync(mediaUrl, fileUri);
+      setLoading(false);
+
+      await Sharing.shareAsync(uri, {
         dialogTitle: 'Share your Campaign',
-        mimeType: 'video/mp4'
       });
     } catch (e) {
+      setLoading(false);
       console.error(e);
+      alert('Error sharing campaign media');
     }
   };
 

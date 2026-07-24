@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Image, ActivityIndicator, Switch } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { startRecording, stopRecording } from '../services/speech.service';
@@ -14,6 +14,7 @@ export default function CampaignCreationScreen({ navigation }: Props) {
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [images, setImages] = useState<string[]>([]);
+  const [isSimulateOffline, setIsSimulateOffline] = useState(false);
 
   const handleVoiceInput = async () => {
     if (isRecording) {
@@ -43,6 +44,11 @@ export default function CampaignCreationScreen({ navigation }: Props) {
   };
 
   const handleGenerate = async () => {
+    if (isSimulateOffline) {
+      navigation.replace('Generation', { campaignId: 'cam-123' });
+      return;
+    }
+
     setIsLoading(true);
     try {
       // 1. Create campaign first
@@ -116,6 +122,16 @@ export default function CampaignCreationScreen({ navigation }: Props) {
             <Text style={styles.uploadText}>Add Photo</Text>
           </TouchableOpacity>
         </ScrollView>
+        
+        <View style={styles.toggleContainer}>
+          <Text style={styles.toggleLabel}>Simulate Offline Mode (Fast Mock)</Text>
+          <Switch 
+            value={isSimulateOffline} 
+            onValueChange={setIsSimulateOffline} 
+            trackColor={{ false: '#334155', true: '#38bdf8' }}
+            thumbColor={isSimulateOffline ? '#ffffff' : '#94a3b8'}
+          />
+        </View>
       </ScrollView>
 
       <View style={styles.footer}>
@@ -260,6 +276,23 @@ const styles = StyleSheet.create({
   uploadText: {
     color: '#94a3b8',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+    padding: 16,
+    borderRadius: 16,
+    marginTop: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  toggleLabel: {
+    color: '#e2e8f0',
+    fontSize: 15,
     fontWeight: '600',
   },
   footer: {

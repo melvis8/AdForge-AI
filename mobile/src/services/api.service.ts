@@ -64,8 +64,9 @@ export const uploadAudioForTranscription = async (audioUri: string): Promise<str
     },
   });
   if (!response.ok) {
-    // If backend isn't ready for transcription, return a smart default based on MVP
-    return "I sell homemade cakes in Yaoundé. I want a Valentine's Day promotion.";
+    const errorText = await response.text();
+    console.error('Transcription API error:', errorText);
+    throw new Error('Transcription failed: ' + errorText);
   }
   const data = await response.json();
   return data.text || '';

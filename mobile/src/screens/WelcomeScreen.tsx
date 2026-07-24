@@ -27,7 +27,10 @@ export default function WelcomeScreen({ navigation }: Props) {
   };
 
   const renderOfflineCampaign = ({ item }: { item: OfflineCampaign }) => (
-    <TouchableOpacity style={styles.offlineCard}>
+    <TouchableOpacity 
+      style={styles.offlineCard}
+      onPress={() => navigation.navigate('Result', { campaignId: item.id })}
+    >
       <Text style={styles.offlineCardTitle}>{item.title}</Text>
       <Text style={styles.offlineCardCaption} numberOfLines={2}>{item.caption || item.description}</Text>
       <Text style={styles.offlineCardDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
