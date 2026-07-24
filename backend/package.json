@@ -10,7 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@prisma/client": "^7.9.0",
+    "@prisma/client": "^5.22.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.2.0",
@@ -21,8 +21,10 @@
     "express": "^5.2.1",
     "multer": "^2.2.0",
     "nodemon": "^3.1.14",
-    "prisma": "^7.9.0",
     "ts-node": "^10.9.2",
     "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
   }
 }
