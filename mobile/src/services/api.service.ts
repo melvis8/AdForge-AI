@@ -1,4 +1,7 @@
-const API_URL = 'https://shaky-weeks-give.loca.lt/api';
+// When you deploy on Render, replace this with your Render service URL
+// e.g. 'https://adforge-api.onrender.com/api'
+// For local dev, use your machine's IP so Expo Go can reach the backend
+const API_URL = 'http://192.168.1.183:3000/api';
 
 export const createCampaign = async (title: string, description: string) => {
   const response = await fetch(`${API_URL}/campaigns`, {
