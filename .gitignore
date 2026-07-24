@@ -1,0 +1,18 @@
+# Node modules
+node_modules/
+backend/node_modules/
+mobile/node_modules/
+
+# Environment files
+.env
+*.env
+backend/.env
+mobile/.env
+
+# Expo / Build outputs
+.expo/
+dist/
+web-build/
+
+# Prisma / Logs
+*.log

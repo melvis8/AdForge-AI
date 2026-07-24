@@ -29,7 +29,7 @@ export const uploadImages = async (req: Request, res: Response) => {
       files.map((file) =>
         prisma.asset.create({
           data: {
-            campaignId: id,
+            campaignId: id as string,
             url: `mock-url-${file.filename}`, // Mocked for now
             type: 'image',
           },
@@ -47,12 +47,12 @@ export const startGeneration = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     await prisma.campaign.update({
-      where: { id },
+      where: { id: id as string },
       data: { status: 'generating' },
     });
 
     // We start generation asynchronously
-    generateCampaignAssets(id).catch(console.error);
+    generateCampaignAssets(id as string).catch(console.error);
 
     res.status(200).json({ message: 'Generation started' });
   } catch (error) {
@@ -65,7 +65,7 @@ export const getCampaign = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const campaign = await prisma.campaign.findUnique({
-      where: { id },
+      where: { id: id as string },
       include: {
         assets: true,
         generated: true,

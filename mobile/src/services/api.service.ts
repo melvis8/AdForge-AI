@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3000/api'; // Change to actual backend URL in production
+const API_URL = 'https://shaky-weeks-give.loca.lt/api';
 
 export const createCampaign = async (title: string, description: string) => {
   const response = await fetch(`${API_URL}/campaigns`, {
