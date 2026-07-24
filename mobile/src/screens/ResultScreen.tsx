@@ -6,7 +6,6 @@ import { getCampaign } from '../services/api.service';
 import { saveCampaignOffline } from '../services/offline.service';
 import { Video, ResizeMode } from 'expo-av';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Result'>;

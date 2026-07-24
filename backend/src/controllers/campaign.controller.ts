@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { generateCampaignAssets } from '../services/genblaze.service';
+import { transcribeAudioFile } from '../services/transcription.service';
 
 const prisma = new PrismaClient();
 
@@ -94,18 +95,18 @@ export const getOfflineTemplates = async (req: Request, res: Response) => {
 
 export const transcribeAudio = async (req: Request, res: Response) => {
   try {
-    // For MVP, we mock the transcription response because we don't have
-    // an OpenAI Whisper API key configured yet.
-    // Normally we would use fs.createReadStream(req.file.path) and send to OpenAI.
+    const file = (req as any).file as Express.Multer.File | undefined;
     
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (!file) {
+      return res.status(400).json({ error: 'No audio file provided' });
+    }
+
+    console.log(`[Controller] Transcribing uploaded file: ${file.path}`);
+    const text = await transcribeAudioFile(file.path);
     
-    res.status(200).json({ 
-      text: "I sell homemade cakes in Yaoundé. I want a Valentine's Day promotion." 
-    });
+    res.status(200).json({ text });
   } catch (error) {
-    console.error(error);
+    console.error('[Controller] Transcription error:', error);
     res.status(500).json({ error: 'Failed to transcribe audio' });
   }
 };

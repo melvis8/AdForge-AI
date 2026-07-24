@@ -1,5 +1,4 @@
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
 import { uploadAudioForTranscription } from './api.service';
 
 let recording: Audio.Recording | undefined;
