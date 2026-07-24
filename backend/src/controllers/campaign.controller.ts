@@ -91,3 +91,21 @@ export const getOfflineTemplates = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch templates' });
   }
 };
+
+export const transcribeAudio = async (req: Request, res: Response) => {
+  try {
+    // For MVP, we mock the transcription response because we don't have
+    // an OpenAI Whisper API key configured yet.
+    // Normally we would use fs.createReadStream(req.file.path) and send to OpenAI.
+    
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    res.status(200).json({ 
+      text: "I sell homemade cakes in Yaoundé. I want a Valentine's Day promotion." 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to transcribe audio' });
+  }
+};

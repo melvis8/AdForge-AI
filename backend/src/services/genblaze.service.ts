@@ -40,6 +40,15 @@ export const generateCampaignAssets = async (campaignId: string) => {
       }
     });
 
+    // Generate video
+    await prisma.generatedFile.create({
+      data: {
+        campaignId,
+        url: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        type: 'video',
+      }
+    });
+
     // Update final status
     await prisma.campaign.update({
       where: { id: campaignId },

@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: adforge_user
+      POSTGRES_PASSWORD: adforge_password
+      POSTGRES_DB: adforge_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://adforge_user:adforge_password@db:5432/adforge_db?schema=public
+      - PORT=3000
+    depends_on:
+      - db
+
+volumes:
+  pgdata:

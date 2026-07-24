@@ -4,7 +4,8 @@ import {
   uploadImages,
   startGeneration,
   getCampaign,
-  getOfflineTemplates
+  getOfflineTemplates,
+  transcribeAudio
 } from '../controllers/campaign.controller';
 import multer from 'multer';
 
@@ -25,5 +26,8 @@ router.get('/campaigns/:id', getCampaign);
 
 // Get offline templates
 router.get('/templates/offline', getOfflineTemplates);
+
+// Transcribe audio
+router.post('/transcribe', upload.single('audio'), transcribeAudio);
 
 export default router;
