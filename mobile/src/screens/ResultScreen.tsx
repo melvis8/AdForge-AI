@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { getCampaign } from '../services/api.service';
@@ -13,8 +13,11 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Result'>;
 
 export default function ResultScreen({ route, navigation }: Props) {
   const { campaignId } = route.params;
+  const { width, height } = useWindowDimensions();
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const isSmallScreen = height < 700;
+  const isTablet = width >= 768;
 
   useEffect(() => {
     const fetchCampaign = async () => {
@@ -22,19 +25,17 @@ export default function ResultScreen({ route, navigation }: Props) {
         const data = await getCampaign(campaignId);
         setCampaign(data);
         
-        // Extract assets
-        const poster = data.generated?.find((f: any) => f.type === 'poster')?.url || "https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80";
-        const video = data.generated?.find((f: any) => f.type === 'video')?.url || "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+        const poster = data.generated?.find((f: any) => f.type === 'poster')?.url || '';
+        const video = data.generated?.find((f: any) => f.type === 'video')?.url || '';
         const captionObj = data.generated?.find((f: any) => f.type === 'caption' && !f.content?.startsWith('STRATEGY:'));
         
-        // Save offline automatically
         await saveCampaignOffline({
           id: data.id,
           title: data.title,
           description: data.description,
           poster: poster,
           video: video,
-          caption: captionObj?.content || "Check out our latest AI generated promotion! 🔥 #AdForge",
+          caption: captionObj?.content || '',
           createdAt: new Date().toISOString()
         });
         
@@ -89,78 +90,84 @@ export default function ResultScreen({ route, navigation }: Props) {
     );
   }
 
-  const videoUrl = campaign?.video || campaign?.generated?.find((f: any) => f.type === 'video')?.url || "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
-  const posterUrl = campaign?.poster || campaign?.generated?.find((f: any) => f.type === 'poster')?.url || "https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80";
-  const caption = campaign?.caption || campaign?.generated?.find((f: any) => f.type === 'caption' && !f.content?.startsWith('STRATEGY:'))?.content || "Discover our amazing product! 🔥 #Marketing #AI #AdForge";
+  const videoUrl = campaign?.video || campaign?.generated?.find((f: any) => f.type === 'video')?.url || '';
+  const posterUrl = campaign?.poster || campaign?.generated?.find((f: any) => f.type === 'poster')?.url || '';
+  const caption = campaign?.caption || campaign?.generated?.find((f: any) => f.type === 'caption' && !f.content?.startsWith('STRATEGY:'))?.content || '';
   
   const rawStrategy = campaign?.generated?.find((f: any) => f.content?.startsWith('STRATEGY:'))?.content?.replace('STRATEGY:', '');
   const suggestions = rawStrategy 
     ? rawStrategy.split('\n').filter((s: string) => s.trim().length > 0)
-    : ["Post this on Instagram Stories at peak hours.", "Run a short 48hr promo.", "Share on WhatsApp Status for local reach."];
+    : [];
+
+  const horizontalPad = isTablet ? 48 : 24;
 
   return (
     <LinearGradient colors={['#0f172a', '#1e1b4b']} style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: isSmallScreen ? 30 : 50, paddingHorizontal: horizontalPad }]}>
         <TouchableOpacity onPress={() => navigation.navigate('Welcome')} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Home</Text>
+          <Text style={styles.backButtonText}>Home</Text>
         </TouchableOpacity>
-        <Text style={styles.title} numberOfLines={1}>{campaign?.title || 'Your Campaign'}</Text>
+        <Text style={[styles.title, { fontSize: isTablet ? 24 : 20 }]} numberOfLines={1}>{campaign?.title || 'Your Campaign'}</Text>
         <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingHorizontal: horizontalPad, paddingBottom: isSmallScreen ? 20 : 40 }]} showsVerticalScrollIndicator={false}>
         
-        {/* Video Section */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Promotional Video (JSON2Video + Cloud Storage)</Text>
-          <View style={styles.videoContainer}>
-             <Video
-              source={{ uri: videoUrl }}
-              style={styles.video}
-              useNativeControls
-              resizeMode={ResizeMode.COVER}
-              isLooping
+        {videoUrl ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Promotional Video</Text>
+            <View style={[styles.videoContainer, { height: isTablet ? 340 : 220 }]}>
+               <Video
+                source={{ uri: videoUrl }}
+                style={styles.video}
+                useNativeControls
+                resizeMode={ResizeMode.CONTAIN}
+                isLooping
+              />
+            </View>
+          </View>
+        ) : null}
+
+        {posterUrl ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>AI Generated Poster</Text>
+            <Image 
+              source={{ uri: posterUrl }} 
+              style={[styles.posterImage, { height: isTablet ? 450 : 300 }]}
+              resizeMode="contain"
             />
           </View>
-        </View>
+        ) : null}
 
-        {/* Poster Section */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>AI Generated Poster (Gemini AI + Backblaze Cloud)</Text>
-          <Image 
-            source={{ uri: posterUrl }} 
-            style={styles.posterImage}
-            resizeMode="cover"
-          />
-        </View>
+        {caption ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Social Media Caption</Text>
+            <Text style={[styles.bodyText, { fontSize: isTablet ? 18 : 16 }]}>{caption}</Text>
+          </View>
+        ) : null}
 
-        {/* Caption Section */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Social Media Caption</Text>
-          <Text style={styles.bodyText}>{caption}</Text>
-        </View>
-
-        {/* Suggestions Section */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Marketing Strategy</Text>
-          {suggestions.map((suggestion: string, index: number) => (
-            <View key={index} style={styles.suggestionRow}>
-              <Text style={styles.bullet}>•</Text>
-              <Text style={[styles.bodyText, { flex: 1 }]}>{suggestion}</Text>
-            </View>
-          ))}
-        </View>
+        {suggestions.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Marketing Strategy</Text>
+            {suggestions.map((suggestion: string, index: number) => (
+              <View key={index} style={styles.suggestionRow}>
+                <Text style={styles.bullet}>{index + 1}.</Text>
+                <Text style={[styles.bodyText, { flex: 1, fontSize: isTablet ? 18 : 16 }]}>{suggestion}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { padding: horizontalPad, paddingBottom: isSmallScreen ? 16 : 40 }]}>
         <TouchableOpacity style={styles.primaryButton} onPress={() => Alert.alert('Saved', 'Campaign saved to local offline storage!')}>
-          <LinearGradient colors={['#0ea5e9', '#3b82f6']} style={styles.btnGradient}>
-            <Text style={styles.primaryButtonText}>Saved ✓</Text>
+          <LinearGradient colors={['#0ea5e9', '#3b82f6']} style={[styles.btnGradient, { paddingVertical: isSmallScreen ? 14 : 18 }]}>
+            <Text style={styles.primaryButtonText}>Saved</Text>
           </LinearGradient>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryButton} onPress={handleShare}>
-          <Text style={styles.secondaryButtonText}>Share 🚀</Text>
+          <Text style={[styles.secondaryButtonText, { paddingVertical: isSmallScreen ? 14 : 18 }]}>Share</Text>
         </TouchableOpacity>
       </View>
     </LinearGradient>
@@ -181,8 +188,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   header: {
-    marginTop: 50,
-    paddingHorizontal: 24,
     marginBottom: 16,
     flexDirection: 'row',
     alignItems: 'center',
@@ -199,15 +204,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   title: {
-    fontSize: 20,
     fontWeight: 'bold',
     color: '#ffffff',
     flex: 1,
     textAlign: 'center',
   },
   scrollContent: {
-    paddingHorizontal: 24,
-    paddingBottom: 40,
   },
   card: {
     backgroundColor: 'rgba(30, 41, 59, 0.6)',
@@ -230,12 +232,10 @@ const styles = StyleSheet.create({
   },
   posterImage: {
     width: '100%',
-    height: 300,
     borderRadius: 12,
   },
   videoContainer: {
     width: '100%',
-    height: 220,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#000',
@@ -245,7 +245,6 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   bodyText: {
-    fontSize: 16,
     color: '#e2e8f0',
     lineHeight: 26,
   },
@@ -257,10 +256,10 @@ const styles = StyleSheet.create({
     color: '#38bdf8',
     fontSize: 18,
     marginRight: 10,
+    fontWeight: '700',
   },
   footer: {
     flexDirection: 'row',
-    padding: 24,
     gap: 16,
   },
   primaryButton: {
@@ -269,7 +268,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   btnGradient: {
-    paddingVertical: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -281,7 +279,6 @@ const styles = StyleSheet.create({
   secondaryButton: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.1)',
-    paddingVertical: 18,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
@@ -292,5 +289,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+    textAlign: 'center',
   },
 });

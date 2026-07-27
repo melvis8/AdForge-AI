@@ -9,15 +9,39 @@ interface VideoResult {
   projectId: string;
 }
 
+const CTA_TEXT: Record<string, string> = {
+  en: '🔥 Order Now!', fr: '🔥 Commandez !', es: '🔥 ¡Ordena ahora!',
+  de: '🔥 Jetzt bestellen!', pt: '🔥 Peça agora!', zh: '🔥 立即订购！',
+  ja: '🔥今すぐ注文！', ko: '🔥 지금 주문!', ar: '!اطلب الآن',
+  ha: '🔥 Yi Aminta Yanzu!', yo: '🔥 Ra Si Bayi Lọwọlọwọ!',
+  sw: '🔥 Agiza Sasa!', it: '🔥 Ordina Ora!', nl: '🔥 Bestel Nu!',
+  ru: '🔥 Закажите сейчас!', hi: '🔥 अभी ऑर्डर करें!', tr: '🔥 Hemen Sipariş Ver!',
+  vi: '🔥 Đặt hàng ngay!', th: '🔥 สั่งซื้อตอนนี้!', id: '🔥 Pesan Sekarang!',
+};
+
+const POWERED_TEXT: Record<string, string> = {
+  en: 'Powered by AdForge AI', fr: 'Propulsé par AdForge AI', es: 'Impulsado por AdForge AI',
+  de: 'Betrieben von AdForge AI', pt: 'Alimentado por AdForge AI', zh: '由 AdForge AI 提供支持',
+  ja: 'AdForge AI搭載', ko: 'AdForge AI 제공', ar: 'بدعم من AdForge AI',
+  ha: 'Ta amfanar da AdForge AI', yo: 'Nípasẹ AdForge AI',
+  sw: 'Imewashwa na AdForge AI', it: 'Offerto da AdForge AI', nl: 'Mogelijk gemaakt door AdForge AI',
+  ru: 'На базе AdForge AI', hi: 'AdForge AI द्वारा संचालित', tr: 'AdForge AI tarafından desteklenmektedir',
+  vi: 'Được hỗ trợ bởi AdForge AI', th: 'ขับเคลื่อนโดย AdForge AI', id: 'Didukung oleh AdForge AI',
+};
+
 /**
  * Creates a promotional video using the JSON2Video API.
- * Builds a multi-scene video from campaign data (title, description, poster image).
+ * Video text is rendered in the campaign's language.
  */
 export const createPromotionalVideo = async (
   title: string,
   description: string,
-  posterUrl?: string
+  posterUrl?: string,
+  language: string = 'en'
 ): Promise<VideoResult> => {
+  const ctaText = CTA_TEXT[language] || CTA_TEXT.en;
+  const poweredText = POWERED_TEXT[language] || POWERED_TEXT.en;
+
   const moviePayload = {
     resolution: 'sd',
     quality: 'high',
@@ -51,7 +75,7 @@ export const createPromotionalVideo = async (
           },
           {
             type: 'text',
-            text: 'Powered by AdForge AI',
+            text: poweredText,
             x: 40,
             y: 240,
             width: 560,
@@ -132,7 +156,7 @@ export const createPromotionalVideo = async (
           },
           {
             type: 'text',
-            text: '🔥 Order Now!',
+            text: ctaText,
             x: 40,
             y: 100,
             width: 560,
@@ -146,7 +170,7 @@ export const createPromotionalVideo = async (
           },
           {
             type: 'text',
-            text: 'Created with AdForge AI',
+            text: poweredText,
             x: 40,
             y: 260,
             width: 560,

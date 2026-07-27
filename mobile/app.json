@@ -5,19 +5,35 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.melvis8.adforgeai"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0f172a",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "package": "com.melvis8.mobile"
+      "package": "com.melvis8.mobile",
+      "minSdkVersion": 24,
+      "targetSdkVersion": 34,
+      "versionCode": 1,
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -26,6 +42,21 @@
       "eas": {
         "projectId": "9dd32993-8714-446d-9024-d768ff886b1a"
       }
-    }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow AdForge AI to access your photos for campaign images.",
+          "cameraPermission": "Allow AdForge AI to take photos for campaign images."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow AdForge AI to record audio for voice-to-text campaign prompts."
+        }
+      ]
+    ]
   }
 }

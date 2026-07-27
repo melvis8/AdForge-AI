@@ -98,7 +98,12 @@ export const uploadBuffer = async (buffer: Buffer, fileName: string, mimeType: s
 export const uploadFromUrl = async (sourceUrl: string, fileName: string): Promise<string> => {
   try {
     console.log(`[B2] Downloading from URL: ${sourceUrl}`);
-    const response = await fetch(sourceUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
+    const response = await fetch(sourceUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
     if (!response.ok) {
       throw new Error(`Failed to download: ${response.status} ${response.statusText}`);
     }

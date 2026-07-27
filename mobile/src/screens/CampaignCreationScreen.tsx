@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Image, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Image, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { startRecording, stopRecording } from '../services/speech.service';
@@ -10,10 +10,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 type Props = NativeStackScreenProps<RootStackParamList, 'CampaignCreation'>;
 
 export default function CampaignCreationScreen({ navigation }: Props) {
+  const { width, height } = useWindowDimensions();
   const [description, setDescription] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [images, setImages] = useState<string[]>([]);
+  const isSmallScreen = height < 700;
+  const isTablet = width >= 768;
+  const imageSize = isTablet ? 130 : 100;
 
   const handleVoiceInput = async () => {
     if (isRecording) {
@@ -54,20 +58,14 @@ export default function CampaignCreationScreen({ navigation }: Props) {
 
     setIsLoading(true);
     try {
-      // Create title directly derived from prompt
       const promptTitle = description.length > 40 ? `${description.substring(0, 40)}...` : description;
-
-      // 1. Create campaign on live backend
       const campaign = await createCampaign(promptTitle, description);
       
-      // 2. Upload images if provided
       if (images.length > 0) {
         await uploadCampaignImages(campaign.id, images);
       }
       
-      // 3. Trigger generation pipeline
       await startGeneration(campaign.id);
-      
       navigation.replace('Generation', { campaignId: campaign.id });
     } catch (e: any) {
       console.error(e);
@@ -80,24 +78,26 @@ export default function CampaignCreationScreen({ navigation }: Props) {
     }
   };
 
+  const horizontalPad = isTablet ? 48 : 24;
+
   return (
     <LinearGradient colors={['#0f172a', '#1e1b4b']} style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: isSmallScreen ? 30 : 50, paddingHorizontal: horizontalPad }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Create Campaign</Text>
+        <Text style={[styles.title, { fontSize: isTablet ? 40 : 34 }]}>Create Campaign</Text>
         <Text style={styles.subtitle}>Describe your product & let AI do the rest.</Text>
       </View>
       
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingHorizontal: horizontalPad, paddingBottom: isSmallScreen ? 20 : 40 }]} showsVerticalScrollIndicator={false}>
         <Text style={styles.label}>Campaign Prompt / Description</Text>
         
-        <LinearGradient colors={['#1e293b', '#334155']} style={styles.inputContainer}>
+        <LinearGradient colors={['#1e293b', '#334155']} style={[styles.inputContainer, { minHeight: isSmallScreen ? 100 : 140 }]}>
           <TextInput
-            style={styles.textInput}
+            style={[styles.textInput, { fontSize: isTablet ? 18 : 16 }]}
             multiline
-            placeholder="E.g. Delicious handmade chocolate cakes for Valentine's day in Douala. 20% discount!"
+            placeholder="E.g. Delicious handmade chocolate cakes for Valentine's day in Douala. 20% discount! You can also write in French, Spanish, Arabic, or any language."
             placeholderTextColor="#94a3b8"
             value={description}
             onChangeText={setDescription}
@@ -112,7 +112,7 @@ export default function CampaignCreationScreen({ navigation }: Props) {
           {isRecording ? (
             <ActivityIndicator color="#fff" style={{ marginRight: 8 }} />
           ) : (
-            <Text style={styles.micIcon}>🎤</Text>
+            <Text style={styles.micIcon}>MIC</Text>
           )}
           <Text style={styles.micText}>
             {isRecording ? 'Listening... Tap to stop & transcribe' : 'Tap to speak your campaign prompt'}
@@ -123,20 +123,20 @@ export default function CampaignCreationScreen({ navigation }: Props) {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewContainer}>
           {images.map((uri, index) => (
             <View key={index} style={styles.imagePreviewWrapper}>
-              <Image source={{ uri }} style={styles.imagePreview} />
+              <Image source={{ uri }} style={[styles.imagePreview, { width: imageSize, height: imageSize }]} />
               <TouchableOpacity style={styles.removeImageBtn} onPress={() => removeImage(index)}>
-                <Text style={styles.removeImageText}>✕</Text>
+                <Text style={styles.removeImageText}>X</Text>
               </TouchableOpacity>
             </View>
           ))}
-          <TouchableOpacity style={styles.uploadBox} onPress={pickImage}>
-            <Text style={styles.uploadIcon}>📸</Text>
+          <TouchableOpacity style={[styles.uploadBox, { width: imageSize, height: imageSize }]} onPress={pickImage}>
+            <Text style={styles.uploadIcon}>+</Text>
             <Text style={styles.uploadText}>Add Photo</Text>
           </TouchableOpacity>
         </ScrollView>
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { padding: horizontalPad, paddingBottom: isSmallScreen ? 16 : 40 }]}>
         <TouchableOpacity 
           style={[styles.generateButton, (isLoading || !description.trim()) && styles.disabledButton]}
           onPress={handleGenerate}
@@ -144,12 +144,12 @@ export default function CampaignCreationScreen({ navigation }: Props) {
         >
           <LinearGradient 
             colors={isLoading ? ['#3b82f6', '#3b82f6'] : ['#0ea5e9', '#3b82f6']} 
-            style={styles.generateGradient}
+            style={[styles.generateGradient, { paddingVertical: isSmallScreen ? 16 : 20 }]}
           >
             {isLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.generateButtonText}>✨ Generate Campaign</Text>
+              <Text style={[styles.generateButtonText, { fontSize: isTablet ? 20 : 18 }]}>Generate Campaign</Text>
             )}
           </LinearGradient>
         </TouchableOpacity>
@@ -163,8 +163,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    marginTop: 50,
-    paddingHorizontal: 24,
     marginBottom: 20,
   },
   backButton: {
@@ -176,7 +174,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   title: {
-    fontSize: 34,
     fontWeight: '800',
     color: '#ffffff',
     letterSpacing: -0.5,
@@ -187,8 +184,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   scrollContent: {
-    paddingHorizontal: 24,
-    paddingBottom: 40,
   },
   label: {
     fontSize: 16,
@@ -199,7 +194,6 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     borderRadius: 20,
-    minHeight: 140,
     padding: 16,
     marginBottom: 24,
     shadowColor: '#000',
@@ -210,7 +204,6 @@ const styles = StyleSheet.create({
   },
   textInput: {
     color: '#ffffff',
-    fontSize: 16,
     lineHeight: 24,
   },
   micButton: {
@@ -229,7 +222,9 @@ const styles = StyleSheet.create({
     borderColor: '#ef4444',
   },
   micIcon: {
-    fontSize: 22,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#38bdf8',
     marginRight: 10,
   },
   micText: {
@@ -246,8 +241,6 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   imagePreview: {
-    width: 100,
-    height: 100,
     borderRadius: 16,
   },
   removeImageBtn: {
@@ -269,8 +262,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   uploadBox: {
-    width: 100,
-    height: 100,
     backgroundColor: 'rgba(30, 41, 59, 0.5)',
     borderRadius: 16,
     borderWidth: 1,
@@ -281,7 +272,8 @@ const styles = StyleSheet.create({
   },
   uploadIcon: {
     fontSize: 28,
-    marginBottom: 8,
+    color: '#94a3b8',
+    marginBottom: 4,
   },
   uploadText: {
     color: '#94a3b8',
@@ -289,8 +281,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   footer: {
-    padding: 24,
-    paddingBottom: 40,
   },
   generateButton: {
     borderRadius: 20,
@@ -302,7 +292,6 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   generateGradient: {
-    paddingVertical: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -311,7 +300,6 @@ const styles = StyleSheet.create({
   },
   generateButtonText: {
     color: '#ffffff',
-    fontSize: 18,
     fontWeight: '800',
   },
 });

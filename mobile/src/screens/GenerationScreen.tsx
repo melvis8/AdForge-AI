@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, Alert } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, Alert, useWindowDimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -8,22 +8,24 @@ import { getCampaign } from '../services/api.service';
 type Props = NativeStackScreenProps<RootStackParamList, 'Generation'>;
 
 const STEPS = [
-  { text: 'Understanding your product prompt...', icon: '🔍' },
-  { text: 'Creating AI marketing strategy...', icon: '📊' },
-  { text: 'Generating Gemini AI poster image...', icon: '🎨' },
-  { text: 'Uploading assets to Backblaze Cloud...', icon: '☁️' },
-  { text: 'Rendering JSON2Video promo clip...', icon: '🎬' },
-  { text: 'Finalizing your campaign...', icon: '✅' },
+  { text: 'Understanding your product prompt...', icon: '1' },
+  { text: 'Creating AI marketing strategy...', icon: '2' },
+  { text: 'Generating Gemini AI poster image...', icon: '3' },
+  { text: 'Uploading assets to Backblaze Cloud...', icon: '4' },
+  { text: 'Rendering JSON2Video promo clip...', icon: '5' },
+  { text: 'Finalizing your campaign...', icon: '6' },
 ];
 
 export default function GenerationScreen({ navigation, route }: Props) {
   const { campaignId } = route.params;
+  const { width, height } = useWindowDimensions();
   const [currentStep, setCurrentStep] = useState(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const spinAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const isSmallScreen = height < 700;
+  const isTablet = width >= 768;
 
-  // Continuous spinner rotation
   useEffect(() => {
     Animated.loop(
       Animated.timing(spinAnim, {
@@ -35,12 +37,10 @@ export default function GenerationScreen({ navigation, route }: Props) {
     ).start();
   }, []);
 
-  // Poll backend for actual completion status
   useEffect(() => {
     let isMounted = true;
     let pollInterval: NodeJS.Timeout;
 
-    // Visual step updater interval
     const stepInterval = setInterval(() => {
       setCurrentStep((prev) => (prev < STEPS.length - 2 ? prev + 1 : prev));
     }, 3000);
@@ -51,7 +51,7 @@ export default function GenerationScreen({ navigation, route }: Props) {
         if (!isMounted) return;
 
         if (campaign.status === 'completed') {
-          setCurrentStep(STEPS.length - 1); // final step
+          setCurrentStep(STEPS.length - 1);
           clearInterval(pollInterval);
           clearInterval(stepInterval);
           setTimeout(() => {
@@ -73,9 +73,8 @@ export default function GenerationScreen({ navigation, route }: Props) {
       }
     };
 
-    // Poll every 3 seconds
     pollInterval = setInterval(checkStatus, 3000);
-    checkStatus(); // Immediate check
+    checkStatus();
 
     return () => {
       isMounted = false;
@@ -84,7 +83,6 @@ export default function GenerationScreen({ navigation, route }: Props) {
     };
   }, [campaignId]);
 
-  // Fade + scale animation on step change
   useEffect(() => {
     fadeAnim.setValue(0);
     scaleAnim.setValue(0.8);
@@ -108,24 +106,34 @@ export default function GenerationScreen({ navigation, route }: Props) {
   });
 
   const progress = ((currentStep + 1) / STEPS.length) * 100;
+  const spinnerSize = isTablet ? 120 : 90;
 
   return (
     <LinearGradient colors={['#0f172a', '#1e1b4b']} style={styles.container}>
       <View style={styles.loaderContainer}>
-        {/* Spinning ring */}
-        <Animated.View style={[styles.spinner, { transform: [{ rotate: spin }] }]} />
+        <Animated.View style={[styles.spinner, {
+          width: spinnerSize,
+          height: spinnerSize,
+          borderRadius: spinnerSize / 2,
+          transform: [{ rotate: spin }]
+        }]} />
 
-        {/* Step icon */}
-        <Animated.Text style={[styles.stepIcon, { opacity: fadeAnim, transform: [{ scale: scaleAnim }] }]}>
+        <Animated.Text style={[styles.stepIcon, {
+          opacity: fadeAnim,
+          transform: [{ scale: scaleAnim }],
+          fontSize: isTablet ? 64 : 48,
+        }]}>
           {STEPS[currentStep].icon}
         </Animated.Text>
 
-        {/* Step text */}
-        <Animated.Text style={[styles.stepText, { opacity: fadeAnim }]}>
+        <Animated.Text style={[styles.stepText, {
+          opacity: fadeAnim,
+          fontSize: isTablet ? 24 : 20,
+          paddingHorizontal: 20,
+        }]}>
           {STEPS[currentStep].text}
         </Animated.Text>
         
-        {/* Progress bar */}
         <View style={styles.progressContainer}>
           <LinearGradient
             colors={['#0ea5e9', '#6366f1']}
@@ -136,7 +144,6 @@ export default function GenerationScreen({ navigation, route }: Props) {
         </View>
         <Text style={styles.progressText}>{Math.round(progress)}%</Text>
 
-        {/* Step indicators */}
         <View style={styles.stepDots}>
           {STEPS.map((_, index) => (
             <View
@@ -166,9 +173,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   spinner: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
     borderWidth: 4,
     borderColor: '#38bdf8',
     borderTopColor: 'transparent',
@@ -176,11 +180,11 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   stepIcon: {
-    fontSize: 48,
+    fontWeight: '800',
+    color: '#38bdf8',
     marginBottom: 16,
   },
   stepText: {
-    fontSize: 20,
     color: '#ffffff',
     fontWeight: '600',
     marginBottom: 40,
