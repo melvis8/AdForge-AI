@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, FlatList, Animated, Image } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -40,8 +40,11 @@ export default function WelcomeScreen({ navigation }: Props) {
   return (
     <LinearGradient colors={['#0f172a', '#1e1b4b', '#0f172a']} style={styles.container}>
       <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
-        <Text style={styles.logoText}>AdForge AI</Text>
-        <Text style={styles.tagline}>🚀</Text>
+        <Image 
+          source={require('../../assets/logo.png')} 
+          style={styles.logoImage}
+          resizeMode="contain" 
+        />
       </Animated.View>
       
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
@@ -104,30 +107,23 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   header: {
-    marginTop: 60,
+    marginTop: 50,
     alignItems: 'center',
-    flexDirection: 'row',
     justifyContent: 'center',
-    gap: 10,
   },
-  logoText: {
-    fontSize: 34,
-    fontWeight: '900',
-    color: '#38bdf8',
-    letterSpacing: 1.5,
-  },
-  tagline: {
-    fontSize: 28,
+  logoImage: {
+    width: 220,
+    height: 110,
   },
   content: {
     flex: 1,
     justifyContent: 'center',
   },
   title: {
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: '800',
     color: '#ffffff',
-    lineHeight: 46,
+    lineHeight: 44,
     marginBottom: 16,
     letterSpacing: -0.5,
   },
@@ -135,9 +131,9 @@ const styles = StyleSheet.create({
     color: '#38bdf8',
   },
   subtitle: {
-    fontSize: 17,
+    fontSize: 16,
     color: '#94a3b8',
-    lineHeight: 28,
+    lineHeight: 26,
   },
   offlineSection: {
     marginBottom: 16,
@@ -185,7 +181,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   footer: {
-    marginBottom: 40,
+    marginBottom: 30,
     gap: 14,
   },
   primaryButton: {

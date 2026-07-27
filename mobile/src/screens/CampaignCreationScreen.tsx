@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Image, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Image, ActivityIndicator, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { startRecording, stopRecording } from '../services/speech.service';
@@ -14,20 +14,23 @@ export default function CampaignCreationScreen({ navigation }: Props) {
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [images, setImages] = useState<string[]>([]);
-  const [isSimulateOffline, setIsSimulateOffline] = useState(false);
 
   const handleVoiceInput = async () => {
     if (isRecording) {
       setIsRecording(false);
       const text = await stopRecording();
-      setDescription(prev => prev ? `${prev} ${text}` : text);
+      if (text && !text.includes('Error transcribing')) {
+        setDescription(prev => prev ? `${prev} ${text}` : text);
+      } else if (text) {
+        Alert.alert('Speech Recognition', text);
+      }
     } else {
       setIsRecording(true);
       await startRecording();
     }
   };
 
-  const pickImage = async (isLogo: boolean = false) => {
+  const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
@@ -44,28 +47,34 @@ export default function CampaignCreationScreen({ navigation }: Props) {
   };
 
   const handleGenerate = async () => {
-    if (isSimulateOffline) {
-      navigation.replace('Generation', { campaignId: 'cam-123' });
+    if (!description.trim()) {
+      Alert.alert('Required Field', 'Please provide a campaign description or speak your prompt.');
       return;
     }
 
     setIsLoading(true);
     try {
-      // 1. Create campaign first
-      const campaign = await createCampaign('New Campaign', description);
+      // Create title directly derived from prompt
+      const promptTitle = description.length > 40 ? `${description.substring(0, 40)}...` : description;
+
+      // 1. Create campaign on live backend
+      const campaign = await createCampaign(promptTitle, description);
       
-      // 2. Upload images if we have any
+      // 2. Upload images if provided
       if (images.length > 0) {
         await uploadCampaignImages(campaign.id, images);
       }
       
-      // 3. Start generation process
+      // 3. Trigger generation pipeline
       await startGeneration(campaign.id);
       
       navigation.replace('Generation', { campaignId: campaign.id });
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Failed to start generation. Make sure backend is running.');
+      Alert.alert(
+        'Connection Error', 
+        'Could not reach the AdForge AI backend. Please check your internet connection and try again.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -74,18 +83,21 @@ export default function CampaignCreationScreen({ navigation }: Props) {
   return (
     <LinearGradient colors={['#0f172a', '#1e1b4b']} style={styles.container}>
       <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
         <Text style={styles.title}>Create Campaign</Text>
-        <Text style={styles.subtitle}>Let AI craft the perfect promotional content.</Text>
+        <Text style={styles.subtitle}>Describe your product & let AI do the rest.</Text>
       </View>
       
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.label}>Describe your product or business</Text>
+        <Text style={styles.label}>Campaign Prompt / Description</Text>
         
         <LinearGradient colors={['#1e293b', '#334155']} style={styles.inputContainer}>
           <TextInput
             style={styles.textInput}
             multiline
-            placeholder="E.g. I sell homemade cakes in Yaoundé. I want a Valentine's Day promotion."
+            placeholder="E.g. Delicious handmade chocolate cakes for Valentine's day in Douala. 20% discount!"
             placeholderTextColor="#94a3b8"
             value={description}
             onChangeText={setDescription}
@@ -103,11 +115,11 @@ export default function CampaignCreationScreen({ navigation }: Props) {
             <Text style={styles.micIcon}>🎤</Text>
           )}
           <Text style={styles.micText}>
-            {isRecording ? 'Listening... Tap to stop' : 'Tap to speak your prompt'}
+            {isRecording ? 'Listening... Tap to stop & transcribe' : 'Tap to speak your campaign prompt'}
           </Text>
         </TouchableOpacity>
 
-        <Text style={styles.label}>Upload Assets (Images & Logos)</Text>
+        <Text style={styles.label}>Upload Product Photos (Optional)</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewContainer}>
           {images.map((uri, index) => (
             <View key={index} style={styles.imagePreviewWrapper}>
@@ -117,26 +129,16 @@ export default function CampaignCreationScreen({ navigation }: Props) {
               </TouchableOpacity>
             </View>
           ))}
-          <TouchableOpacity style={styles.uploadBox} onPress={() => pickImage()}>
+          <TouchableOpacity style={styles.uploadBox} onPress={pickImage}>
             <Text style={styles.uploadIcon}>📸</Text>
             <Text style={styles.uploadText}>Add Photo</Text>
           </TouchableOpacity>
         </ScrollView>
-        
-        <View style={styles.toggleContainer}>
-          <Text style={styles.toggleLabel}>Simulate Offline Mode (Fast Mock)</Text>
-          <Switch 
-            value={isSimulateOffline} 
-            onValueChange={setIsSimulateOffline} 
-            trackColor={{ false: '#334155', true: '#38bdf8' }}
-            thumbColor={isSimulateOffline ? '#ffffff' : '#94a3b8'}
-          />
-        </View>
       </ScrollView>
 
       <View style={styles.footer}>
         <TouchableOpacity 
-          style={[styles.generateButton, isLoading && styles.disabledButton]}
+          style={[styles.generateButton, (isLoading || !description.trim()) && styles.disabledButton]}
           onPress={handleGenerate}
           disabled={isLoading || !description.trim()}
         >
@@ -161,9 +163,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    marginTop: 60,
+    marginTop: 50,
     paddingHorizontal: 24,
     marginBottom: 20,
+  },
+  backButton: {
+    marginBottom: 10,
+  },
+  backButtonText: {
+    color: '#38bdf8',
+    fontSize: 16,
+    fontWeight: '600',
   },
   title: {
     fontSize: 34,
@@ -224,7 +234,7 @@ const styles = StyleSheet.create({
   },
   micText: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
   },
   imagePreviewContainer: {
@@ -278,23 +288,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  toggleContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.5)',
-    padding: 16,
-    borderRadius: 16,
-    marginTop: 10,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  toggleLabel: {
-    color: '#e2e8f0',
-    fontSize: 15,
-    fontWeight: '600',
-  },
   footer: {
     padding: 24,
     paddingBottom: 40,
@@ -314,7 +307,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   disabledButton: {
-    opacity: 0.7,
+    opacity: 0.5,
   },
   generateButtonText: {
     color: '#ffffff',

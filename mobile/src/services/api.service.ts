@@ -1,7 +1,15 @@
-// When you deploy on Render, replace this with your Render service URL
-// e.g. 'https://adforge-api.onrender.com/api'
-// For local dev, use your machine's IP so Expo Go can reach the backend
-const API_URL = 'http://192.168.1.183:3000/api';
+// Deployed Render service API URL
+const API_URL = 'https://adforge-api-hday.onrender.com/api';
+
+export const checkBackendHealth = async () => {
+  try {
+    const response = await fetch(`${API_URL}/health`);
+    return response.ok;
+  } catch (error) {
+    console.error('Health check failed:', error);
+    return false;
+  }
+};
 
 export const createCampaign = async (title: string, description: string) => {
   const response = await fetch(`${API_URL}/campaigns`, {
@@ -30,10 +38,14 @@ export const getCampaign = async (campaignId: string) => {
 export const uploadCampaignImages = async (campaignId: string, imageUris: string[]) => {
   const formData = new FormData();
   imageUris.forEach((uri, index) => {
+    const filename = uri.split('/').pop() || `image_${index}.jpg`;
+    const match = /\.(\w+)$/.exec(filename);
+    const type = match ? `image/${match[1]}` : 'image/jpeg';
+    
     formData.append('files', {
       uri,
-      name: `image_${index}.jpg`,
-      type: 'image/jpeg',
+      name: filename,
+      type,
     } as any);
   });
 
@@ -50,9 +62,11 @@ export const uploadCampaignImages = async (campaignId: string, imageUris: string
 
 export const uploadAudioForTranscription = async (audioUri: string): Promise<string> => {
   const formData = new FormData();
+  const filename = audioUri.split('/').pop() || 'recording.m4a';
+  
   formData.append('audio', {
     uri: audioUri,
-    name: 'recording.m4a',
+    name: filename,
     type: 'audio/m4a',
   } as any);
 

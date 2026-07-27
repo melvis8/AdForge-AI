@@ -1,17 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { LinearGradient } from 'expo-linear-gradient';
+import { getCampaign } from '../services/api.service';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Generation'>;
 
 const STEPS = [
-  { text: 'Understanding your product...', icon: '🔍' },
-  { text: 'Creating marketing strategy...', icon: '📊' },
-  { text: 'Writing captions & hashtags...', icon: '✍️' },
-  { text: 'Designing advertisement...', icon: '🎨' },
-  { text: 'Rendering promotional video...', icon: '🎬' },
+  { text: 'Understanding your product prompt...', icon: '🔍' },
+  { text: 'Creating AI marketing strategy...', icon: '📊' },
+  { text: 'Generating Gemini AI poster image...', icon: '🎨' },
+  { text: 'Uploading assets to Backblaze Cloud...', icon: '☁️' },
+  { text: 'Rendering JSON2Video promo clip...', icon: '🎬' },
   { text: 'Finalizing your campaign...', icon: '✅' },
 ];
 
@@ -34,21 +35,54 @@ export default function GenerationScreen({ navigation, route }: Props) {
     ).start();
   }, []);
 
-  // Step progression
+  // Poll backend for actual completion status
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentStep((prev) => {
-        if (prev < STEPS.length - 1) return prev + 1;
-        clearInterval(interval);
-        setTimeout(() => {
-          navigation.replace('Result', { campaignId });
-        }, 1200);
-        return prev;
-      });
-    }, 1500);
+    let isMounted = true;
+    let pollInterval: NodeJS.Timeout;
 
-    return () => clearInterval(interval);
-  }, []);
+    // Visual step updater interval
+    const stepInterval = setInterval(() => {
+      setCurrentStep((prev) => (prev < STEPS.length - 2 ? prev + 1 : prev));
+    }, 3000);
+
+    const checkStatus = async () => {
+      try {
+        const campaign = await getCampaign(campaignId);
+        if (!isMounted) return;
+
+        if (campaign.status === 'completed') {
+          setCurrentStep(STEPS.length - 1); // final step
+          clearInterval(pollInterval);
+          clearInterval(stepInterval);
+          setTimeout(() => {
+            if (isMounted) {
+              navigation.replace('Result', { campaignId });
+            }
+          }, 1000);
+        } else if (campaign.status === 'failed') {
+          clearInterval(pollInterval);
+          clearInterval(stepInterval);
+          Alert.alert(
+            'Generation Failed',
+            'An error occurred while generating campaign assets with AI. Please try again.',
+            [{ text: 'OK', onPress: () => navigation.replace('CampaignCreation') }]
+          );
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    };
+
+    // Poll every 3 seconds
+    pollInterval = setInterval(checkStatus, 3000);
+    checkStatus(); // Immediate check
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+      clearInterval(stepInterval);
+    };
+  }, [campaignId]);
 
   // Fade + scale animation on step change
   useEffect(() => {

@@ -12,6 +12,11 @@ import multer from 'multer';
 const router = Router();
 const upload = multer({ dest: 'uploads/' });
 
+// Health check
+router.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Create campaign
 router.post('/campaigns', createCampaign);
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { getCampaign } from '../services/api.service';
@@ -25,7 +25,7 @@ export default function ResultScreen({ route, navigation }: Props) {
         // Extract assets
         const poster = data.generated?.find((f: any) => f.type === 'poster')?.url || "https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80";
         const video = data.generated?.find((f: any) => f.type === 'video')?.url || "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
-        const captionObj = data.generated?.find((f: any) => f.type === 'caption');
+        const captionObj = data.generated?.find((f: any) => f.type === 'caption' && !f.content?.startsWith('STRATEGY:'));
         
         // Save offline automatically
         await saveCampaignOffline({
@@ -40,39 +40,13 @@ export default function ResultScreen({ route, navigation }: Props) {
         
       } catch (e) {
         console.error(e);
+        Alert.alert('Error', 'Could not load campaign details from server.');
       } finally {
         setLoading(false);
       }
     };
-    
-    // In MVP, we mock if backend fails to return quick results
-    if (campaignId === 'cam-123') {
-      const mockData = {
-        id: 'cam-123',
-        title: "Valentine's Day Cake Promo",
-        description: "Special cake promo",
-        poster: "https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
-        video: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-        caption: "Celebrate love with our homemade cakes! 💖 Pre-order your Valentine's special today and make it a day to remember. #ValentinesDay #CakeLove",
-        suggestions: [
-          "Post this on Instagram Stories around 6 PM.",
-          "Offer a 10% discount for the first 20 pre-orders."
-        ]
-      };
-      setCampaign(mockData);
-      saveCampaignOffline({
-        id: mockData.id,
-        title: mockData.title,
-        description: mockData.description,
-        poster: mockData.poster,
-        video: mockData.video,
-        caption: mockData.caption,
-        createdAt: new Date().toISOString()
-      });
-      setLoading(false);
-    } else {
-      fetchCampaign();
-    }
+
+    fetchCampaign();
   }, [campaignId]);
 
   const handleShare = async () => {
@@ -80,13 +54,13 @@ export default function ResultScreen({ route, navigation }: Props) {
     try {
       const isAvailable = await Sharing.isAvailableAsync();
       if (!isAvailable) {
-        alert("Sharing is not available on this device");
+        Alert.alert("Sharing Not Available", "Sharing is not supported on this device.");
         return;
       }
       
-      const mediaUrl = campaign.video || campaign.poster || campaign?.generated?.find((f: any) => f.type === 'video')?.url || campaign?.generated?.find((f: any) => f.type === 'poster')?.url;
+      const mediaUrl = campaign.video || campaign?.generated?.find((f: any) => f.type === 'video')?.url || campaign?.generated?.find((f: any) => f.type === 'poster')?.url;
       if (!mediaUrl) {
-        alert("No media available to share.");
+        Alert.alert("Error", "No media available to share.");
         return;
       }
 
@@ -97,12 +71,12 @@ export default function ResultScreen({ route, navigation }: Props) {
       setLoading(false);
 
       await Sharing.shareAsync(uri, {
-        dialogTitle: 'Share your Campaign',
+        dialogTitle: 'Share your AdForge AI Campaign',
       });
     } catch (e) {
       setLoading(false);
       console.error(e);
-      alert('Error sharing campaign media');
+      Alert.alert('Error', 'Failed to share campaign media');
     }
   };
 
@@ -110,15 +84,19 @@ export default function ResultScreen({ route, navigation }: Props) {
     return (
       <View style={[styles.container, styles.center]}>
         <ActivityIndicator size="large" color="#38bdf8" />
-        <Text style={styles.loadingText}>Finalizing your masterpiece...</Text>
+        <Text style={styles.loadingText}>Fetching your AI generated campaign...</Text>
       </View>
     );
   }
 
   const videoUrl = campaign?.video || campaign?.generated?.find((f: any) => f.type === 'video')?.url || "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
   const posterUrl = campaign?.poster || campaign?.generated?.find((f: any) => f.type === 'poster')?.url || "https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80";
-  const caption = campaign?.caption || campaign?.generated?.find((f: any) => f.type === 'caption')?.content || "Discover our amazing product! 🔥 #Marketing #AI #AdForge";
-  const suggestions = campaign?.suggestions || ["Post this on Instagram Stories at peak hours.", "Run a short 48hr promo."];
+  const caption = campaign?.caption || campaign?.generated?.find((f: any) => f.type === 'caption' && !f.content?.startsWith('STRATEGY:'))?.content || "Discover our amazing product! 🔥 #Marketing #AI #AdForge";
+  
+  const rawStrategy = campaign?.generated?.find((f: any) => f.content?.startsWith('STRATEGY:'))?.content?.replace('STRATEGY:', '');
+  const suggestions = rawStrategy 
+    ? rawStrategy.split('\n').filter((s: string) => s.trim().length > 0)
+    : ["Post this on Instagram Stories at peak hours.", "Run a short 48hr promo.", "Share on WhatsApp Status for local reach."];
 
   return (
     <LinearGradient colors={['#0f172a', '#1e1b4b']} style={styles.container}>
@@ -126,7 +104,7 @@ export default function ResultScreen({ route, navigation }: Props) {
         <TouchableOpacity onPress={() => navigation.navigate('Welcome')} style={styles.backButton}>
           <Text style={styles.backButtonText}>← Home</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Your Campaign</Text>
+        <Text style={styles.title} numberOfLines={1}>{campaign?.title || 'Your Campaign'}</Text>
         <View style={{ width: 60 }} />
       </View>
 
@@ -134,7 +112,7 @@ export default function ResultScreen({ route, navigation }: Props) {
         
         {/* Video Section */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Promotional Video</Text>
+          <Text style={styles.cardTitle}>Promotional Video (JSON2Video + Cloud Storage)</Text>
           <View style={styles.videoContainer}>
              <Video
               source={{ uri: videoUrl }}
@@ -148,7 +126,7 @@ export default function ResultScreen({ route, navigation }: Props) {
 
         {/* Poster Section */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Generated Poster</Text>
+          <Text style={styles.cardTitle}>AI Generated Poster (Gemini AI + Backblaze Cloud)</Text>
           <Image 
             source={{ uri: posterUrl }} 
             style={styles.posterImage}
@@ -168,7 +146,7 @@ export default function ResultScreen({ route, navigation }: Props) {
           {suggestions.map((suggestion: string, index: number) => (
             <View key={index} style={styles.suggestionRow}>
               <Text style={styles.bullet}>•</Text>
-              <Text style={styles.bodyText}>{suggestion}</Text>
+              <Text style={[styles.bodyText, { flex: 1 }]}>{suggestion}</Text>
             </View>
           ))}
         </View>
@@ -176,7 +154,7 @@ export default function ResultScreen({ route, navigation }: Props) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.primaryButton} onPress={() => alert('Campaign saved to offline storage!')}>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => Alert.alert('Saved', 'Campaign saved to local offline storage!')}>
           <LinearGradient colors={['#0ea5e9', '#3b82f6']} style={styles.btnGradient}>
             <Text style={styles.primaryButtonText}>Saved ✓</Text>
           </LinearGradient>
@@ -203,7 +181,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   header: {
-    marginTop: 60,
+    marginTop: 50,
     paddingHorizontal: 24,
     marginBottom: 16,
     flexDirection: 'row',
@@ -221,9 +199,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   title: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#ffffff',
+    flex: 1,
+    textAlign: 'center',
   },
   scrollContent: {
     paddingHorizontal: 24,
@@ -243,7 +223,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: '#38bdf8',
     marginBottom: 16,

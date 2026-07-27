@@ -2,15 +2,23 @@ import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { generateCampaignAssets } from '../services/genblaze.service';
 import { transcribeAudioFile } from '../services/transcription.service';
+import { uploadFile } from '../services/storage.service';
+import fs from 'fs';
 
 const prisma = new PrismaClient();
 
 export const createCampaign = async (req: Request, res: Response) => {
   try {
     const { title, description } = req.body;
+    
+    // If title isn't explicitly provided, use the prompt/description to create a clear title
+    const campaignTitle = title && title !== 'New Campaign' 
+      ? title 
+      : (description ? description.substring(0, 45) + (description.length > 45 ? '...' : '') : 'New Campaign');
+
     const campaign = await prisma.campaign.create({
       data: {
-        title: title || 'New Campaign',
+        title: campaignTitle,
         description: description || '',
       },
     });
@@ -25,17 +33,32 @@ export const uploadImages = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const files = req.files as Express.Multer.File[];
-    // Normally we'd upload to Backblaze B2 here and save URL
     const assets = await Promise.all(
-      files.map((file) =>
-        prisma.asset.create({
+      files.map(async (file) => {
+        let b2Url = '';
+        try {
+          console.log(`[Controller] Uploading ${file.filename} to B2...`);
+          b2Url = await uploadFile(file.path, file.filename);
+        } catch (uploadError) {
+          console.error('[Controller] B2 Upload failed, using mock URL', uploadError);
+          b2Url = `https://mock-storage.com/${file.filename}`;
+        }
+
+        // Clean up local file after uploading to cloud
+        try {
+          fs.unlinkSync(file.path);
+        } catch (e) {
+          console.error('[Controller] Failed to delete local file:', e);
+        }
+
+        return prisma.asset.create({
           data: {
             campaignId: id as string,
-            url: `mock-url-${file.filename}`, // Mocked for now
+            url: b2Url,
             type: 'image',
           },
-        })
-      )
+        });
+      })
     );
     res.status(200).json({ message: 'Files uploaded successfully', assets });
   } catch (error) {
