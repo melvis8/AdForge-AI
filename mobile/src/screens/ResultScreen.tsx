@@ -292,7 +292,7 @@ export default function ResultScreen({ route, navigation }: Props) {
     ? campaignData.strategy.split('\n').filter((s: string) => s.trim().length > 0)
     : [];
 
-  const finalVideoUrl = campaignData.video || PLACEHOLDER_VIDEO;
+  const finalVideoUrl = campaignData.video || '';
   const finalPosterUrl = campaignData.poster || PLACEHOLDER_IMAGE;
 
   const horizontalPad = isTablet ? 48 : 24;
@@ -314,7 +314,7 @@ export default function ResultScreen({ route, navigation }: Props) {
         showsVerticalScrollIndicator={false}
       >
         {/* Video Section */}
-        {finalVideoUrl && !videoFailed ? (
+        {finalVideoUrl && finalVideoUrl !== '' && !videoFailed ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Your Video</Text>
             <View style={[styles.videoContainer, { height: isTablet ? 340 : 220 }]}>

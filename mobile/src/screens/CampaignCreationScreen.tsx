@@ -97,7 +97,7 @@ export default function CampaignCreationScreen({ navigation }: Props) {
           <TextInput
             style={[styles.textInput, { fontSize: isTablet ? 18 : 16 }]}
             multiline
-            placeholder="E.g. Delicious handmade chocolate cakes for Valentine's day in Douala. 20% discount! You can also write in French, Spanish, Arabic, or any language."
+            placeholder="Describe your product or service. The more details you give, the better your campaign will be. Example: Organic skincare brand launching a new Vitamin C serum with 30% off for the first 100 customers"
             placeholderTextColor="#94a3b8"
             value={description}
             onChangeText={setDescription}
