@@ -9,6 +9,7 @@ export interface OfflineCampaign {
   poster?: string;
   caption?: string;
   video?: string;
+  strategy?: string;
   createdAt: string;
 }
 
@@ -17,7 +18,6 @@ export const saveCampaignOffline = async (campaign: OfflineCampaign) => {
     const existingStr = await AsyncStorage.getItem(CAMPAIGNS_KEY);
     const existing: OfflineCampaign[] = existingStr ? JSON.parse(existingStr) : [];
     
-    // Check if it already exists and update, or add new
     const index = existing.findIndex(c => c.id === campaign.id);
     if (index >= 0) {
       existing[index] = campaign;
@@ -38,5 +38,15 @@ export const getOfflineCampaigns = async (): Promise<OfflineCampaign[]> => {
   } catch (error) {
     console.error('Failed to load offline campaigns', error);
     return [];
+  }
+};
+
+export const getOfflineCampaignById = async (id: string): Promise<OfflineCampaign | null> => {
+  try {
+    const campaigns = await getOfflineCampaigns();
+    return campaigns.find(c => c.id === id) || null;
+  } catch (error) {
+    console.error('Failed to get offline campaign by id', error);
+    return null;
   }
 };

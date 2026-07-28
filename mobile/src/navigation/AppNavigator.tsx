@@ -10,7 +10,7 @@ export type RootStackParamList = {
   Welcome: undefined;
   CampaignCreation: undefined;
   Generation: { campaignId: string };
-  Result: { campaignId: string };
+  Result: { campaignId: string; offlineData?: any };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();

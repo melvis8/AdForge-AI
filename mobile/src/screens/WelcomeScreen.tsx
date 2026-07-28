@@ -32,11 +32,16 @@ export default function WelcomeScreen({ navigation }: Props) {
   const renderOfflineCampaign = ({ item }: { item: OfflineCampaign }) => (
     <TouchableOpacity 
       style={[styles.offlineCard, { width: isTablet ? 280 : 220 }]}
-      onPress={() => navigation.navigate('Result', { campaignId: item.id })}
+      onPress={() => navigation.navigate('Result', { campaignId: item.id, offlineData: item })}
     >
-      <Text style={styles.offlineCardTitle} numberOfLines={1}>{item.title}</Text>
-      <Text style={styles.offlineCardCaption} numberOfLines={2}>{item.caption || item.description}</Text>
-      <Text style={styles.offlineCardDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+      {item.poster ? (
+        <Image source={{ uri: item.poster }} style={[styles.offlineCardImage, { height: isTablet ? 160 : 120 }]} resizeMode="cover" />
+      ) : null}
+      <View style={styles.offlineCardContent}>
+        <Text style={styles.offlineCardTitle} numberOfLines={1}>{item.title}</Text>
+        <Text style={styles.offlineCardCaption} numberOfLines={2}>{item.caption || item.description}</Text>
+        <Text style={styles.offlineCardDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+      </View>
     </TouchableOpacity>
   );
 
@@ -149,10 +154,17 @@ const styles = StyleSheet.create({
   offlineCard: {
     backgroundColor: 'rgba(30, 41, 59, 0.8)',
     borderRadius: 16,
-    padding: 16,
+    padding: 0,
     marginRight: 12,
     borderWidth: 1,
     borderColor: '#334155',
+    overflow: 'hidden',
+  },
+  offlineCardImage: {
+    width: '100%',
+  },
+  offlineCardContent: {
+    padding: 16,
   },
   offlineCardTitle: {
     color: '#38bdf8',
