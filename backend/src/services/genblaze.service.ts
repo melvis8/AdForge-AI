@@ -56,23 +56,17 @@ const generateCampaignTitle = async (description: string, language: string): Pro
 };
 
 /**
- * Generate a campaign poster image using fal.ai Flux Pro.
- * 1. Use OpenAI to write a detailed visual prompt based on the user's product
- * 2. Generate image with fal.ai Flux Pro v1.1
- * 3. Upload to B2 for persistence, fallback to fal CDN URL
+ * Generate a campaign poster image.
+ * Strategy: Try fal.ai Flux Pro first, fall back to Pollinations (free)
  */
 const generatePosterImage = async (title: string, description: string, campaignId: string, language: string): Promise<string> => {
-  if (!FAL_KEY) {
-    throw new Error('FAL_API_KEY not configured');
-  }
-
   // Step 1: Generate a detailed visual prompt using OpenAI
   let visualPrompt = `professional advertising poster for ${title}, premium brand aesthetic, vibrant colors, 8k photorealistic, studio lighting, modern design`;
   try {
     const promptCompletion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You write image generation prompts for Flux Pro AI. Output ONLY the prompt, nothing else. Be extremely detailed and vivid.' },
+        { role: 'system', content: 'You write image generation prompts for AI image generators. Output ONLY the prompt, nothing else. Be extremely detailed and vivid.' },
         { role: 'user', content: `Write a detailed, vivid image prompt for an advertising poster. The poster is for: "${title}" - ${description}. Describe the exact scene, products, colors, lighting, mood, and style. Be very specific about what should appear in the image. Keep under 400 characters.` }
       ],
       max_tokens: 200,
@@ -86,49 +80,89 @@ const generatePosterImage = async (title: string, description: string, campaignI
     console.error('[OpenAI] Image prompt generation failed:', e);
   }
 
-  console.log(`[Genblaze] Flux Pro prompt: ${visualPrompt}`);
+  console.log(`[Genblaze] Visual prompt: ${visualPrompt}`);
 
-  // Step 2: Generate image with fal.ai Flux Pro v1.1
-  try {
-    console.log(`[Genblaze] Generating image with fal.ai Flux Pro...`);
-    const result = await fal.subscribe('fal-ai/flux-pro/v1.1', {
-      input: {
-        prompt: visualPrompt,
-        image_size: 'square_hd',
-        num_images: 1,
-        output_format: 'jpeg',
-        safety_tolerance: '3',
-        enhance_prompt: true,
-      },
-      logs: true,
-      onQueueUpdate: (update: any) => {
-        if (update.status === 'IN_PROGRESS') {
-          update.logs?.map((log: any) => log.message).forEach(console.log);
+  // Strategy 1: Try fal.ai Flux Pro (paid, high quality)
+  if (FAL_KEY) {
+    try {
+      console.log(`[Genblaze] Trying fal.ai Flux Pro...`);
+      const result = await fal.subscribe('fal-ai/flux-pro/v1.1', {
+        input: {
+          prompt: visualPrompt,
+          image_size: 'square_hd',
+          num_images: 1,
+          output_format: 'jpeg',
+          safety_tolerance: '3',
+          enhance_prompt: true,
+        },
+        logs: true,
+        onQueueUpdate: (update: any) => {
+          if (update.status === 'IN_PROGRESS') {
+            update.logs?.map((log: any) => log.message).forEach(console.log);
+          }
+        },
+      });
+
+      const data = result.data as any;
+      const imageUrl = data?.images?.[0]?.url;
+
+      if (imageUrl) {
+        console.log(`[Genblaze] fal.ai image generated: ${imageUrl.substring(0, 80)}...`);
+        // Try to upload to B2
+        try {
+          const b2Url = await uploadFromUrl(imageUrl, `campaigns/${campaignId}/poster_${Date.now()}.jpg`);
+          console.log(`[Genblaze] Poster saved to B2: ${b2Url}`);
+          return b2Url;
+        } catch (b2Err) {
+          console.log(`[Genblaze] B2 upload failed, using fal CDN URL`);
+          return imageUrl;
         }
-      },
-    });
+      }
+    } catch (e: any) {
+      console.error('[Genblaze] fal.ai image failed, falling back to Pollinations:', e?.message || e);
+    }
+  }
 
-    const data = result.data as any;
-    const imageUrl = data?.images?.[0]?.url;
+  // Strategy 2: Pollinations.ai (free, no API key needed)
+  try {
+    console.log(`[Genblaze] Using Pollinations.ai (free fallback)...`);
+    const encodedPrompt = encodeURIComponent(visualPrompt);
+    const randomSeed = Math.floor(Math.random() * 1000000);
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${randomSeed}&enhance=true`;
 
-    if (imageUrl) {
-      console.log(`[Genblaze] Image generated: ${imageUrl}`);
+    // Download the image
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    const response = await fetch(pollinationsUrl, { signal: controller.signal });
+    clearTimeout(timeout);
 
-      // Step 3: Upload to B2 for persistence
+    if (response.ok) {
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      const fileName = `campaigns/${campaignId}/poster_${Date.now()}.jpg`;
+
+      // Try to upload to B2
       try {
-        const b2Url = await uploadFromUrl(imageUrl, `campaigns/${campaignId}/poster_${Date.now()}.jpg`);
+        const b2Url = await uploadBuffer(buffer, fileName, contentType);
         console.log(`[Genblaze] Poster saved to B2: ${b2Url}`);
         return b2Url;
       } catch (b2Err) {
-        console.log(`[Genblaze] B2 upload failed, using fal CDN URL`);
-        return imageUrl;
+        console.log(`[Genblaze] B2 upload failed, saving locally`);
+        const fs = require('fs');
+        const path = require('path');
+        const localDir = path.join(process.cwd(), 'uploads', 'generated', campaignId);
+        fs.mkdirSync(localDir, { recursive: true });
+        const localPath = path.join(localDir, `poster_${Date.now()}.jpg`);
+        fs.writeFileSync(localPath, buffer);
+        return pollinationsUrl;
       }
     }
-  } catch (e: any) {
-    console.error('[Genblaze] fal.ai image generation failed:', e?.message || e);
+  } catch (e) {
+    console.error('[Genblaze] Pollinations fallback also failed:', e);
   }
 
-  throw new Error('Image generation failed - fal.ai returned no image');
+  throw new Error('All image generation methods failed');
 };
 
 const generateCaption = async (title: string, description: string, language: string): Promise<string> => {
