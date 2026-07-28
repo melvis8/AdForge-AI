@@ -9,10 +9,9 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Generation'>;
 
 const STEPS = [
   'Analyzing your prompt...',
-  'Crafting your marketing strategy...',
   'Generating your campaign image...',
-  'Creating your promotional content...',
-  'Building your campaign video...',
+  'Writing your marketing caption...',
+  'Creating your strategy...',
   'Finalizing your campaign...',
 ];
 

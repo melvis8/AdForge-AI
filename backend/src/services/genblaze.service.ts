@@ -253,46 +253,43 @@ export const generateCampaignAssets = async (campaignId: string) => {
     // Step 1: Detect language
     const language = await detectLanguage(description);
     const langName = LANG_NAMES[language] || 'English';
+    console.log(`[Genblaze] Detected language: ${language}`);
 
     // Step 2: Generate title
     const title = await generateCampaignTitle(description, language);
     await prisma.campaign.update({ where: { id: campaignId }, data: { title } });
+    console.log(`[Genblaze] Title: ${title}`);
 
-    // Step 3: Generate image (Pollinations.ai -> B2 upload)
-    const posterUrl = await generatePosterImage(title, description, campaignId, language);
-    await prisma.generatedFile.create({
-      data: { campaignId, url: posterUrl, type: 'poster' }
-    });
+    // Step 3 & 4: Generate image AND caption in parallel (both fast)
+    console.log(`[Genblaze] Generating image and caption in parallel...`);
+    const [posterResult, captionResult] = await Promise.allSettled([
+      generatePosterImage(title, description, campaignId, language),
+      generateCaption(title, description, language),
+    ]);
 
-    // Step 4: Generate LONG, compelling caption
-    let caption = await generateCaption(title, description, language);
+    // Handle image result
+    let posterUrl = '';
+    if (posterResult.status === 'fulfilled') {
+      posterUrl = posterResult.value;
+      await prisma.generatedFile.create({
+        data: { campaignId, url: posterUrl, type: 'poster' }
+      });
+      console.log(`[Genblaze] Image generated: ${posterUrl.substring(0, 80)}...`);
+    } else {
+      console.error('[Genblaze] Image generation failed:', posterResult.reason);
+    }
+
+    // Handle caption result
+    let caption = captionResult.status === 'fulfilled' ? captionResult.value : '';
     if (!caption) {
       caption = `Discover ${title} - ${description}`;
     }
     await prisma.generatedFile.create({
       data: { campaignId, url: '', type: 'caption', content: caption }
     });
+    console.log(`[Genblaze] Caption generated (${caption.split(' ').length} words)`);
 
-    // Step 5: Generate video with fal.ai (Kling v3)
-    let videoUrl = '';
-    try {
-      console.log(`[Genblaze] Starting video generation...`);
-      const videoResult = await createPromotionalVideo(title, description, posterUrl, language);
-      if (videoResult && videoResult.url) {
-        const videoFileName = `campaigns/${campaignId}/video_${Date.now()}.mp4`;
-        videoUrl = await uploadFromUrl(videoResult.url, videoFileName);
-        console.log(`[Genblaze] Video saved: ${videoUrl}`);
-      }
-    } catch (e: any) {
-      console.error('[Genblaze] Video generation failed:', e?.message || e);
-      // Don't set a broken fallback - leave empty so the UI shows "video generation in progress"
-      videoUrl = '';
-    }
-    await prisma.generatedFile.create({
-      data: { campaignId, url: videoUrl, type: 'video' }
-    });
-
-    // Step 6: Generate strategy
+    // Step 5: Generate strategy (fast)
     let suggestions = await generateStrategy(title, description, language);
     if (!suggestions) {
       suggestions = language === 'fr'
@@ -303,18 +300,51 @@ export const generateCampaignAssets = async (campaignId: string) => {
       data: { campaignId, url: '', type: 'caption', content: `STRATEGY:${suggestions}` }
     });
 
-    // Done
+    // Mark campaign as completed NOW (without video)
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'completed' },
     });
-    
-    console.log(`Campaign ${campaignId} completed (${language}).`);
+    console.log(`[Genblaze] Campaign ${campaignId} completed (${language}). Image + caption + strategy done.`);
+
+    // Step 6: Generate video in BACKGROUND (don't block the user)
+    generateVideoInBackground(campaignId, title, description, posterUrl, language).catch(e => {
+      console.error('[Genblaze] Background video failed:', e);
+    });
+
   } catch (error) {
     console.error(`Error generating assets for campaign ${campaignId}:`, error);
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'failed' },
     });
+  }
+};
+
+/**
+ * Generate video in background AFTER campaign is marked completed.
+ * The user can already see their image, caption, and strategy.
+ * Video will appear when ready.
+ */
+const generateVideoInBackground = async (
+  campaignId: string,
+  title: string,
+  description: string,
+  posterUrl: string,
+  language: string
+) => {
+  console.log(`[Genblaze] Starting background video generation for ${campaignId}...`);
+  try {
+    const videoResult = await createPromotionalVideo(title, description, posterUrl, language);
+    if (videoResult && videoResult.url) {
+      const videoFileName = `campaigns/${campaignId}/video_${Date.now()}.mp4`;
+      const videoUrl = await uploadFromUrl(videoResult.url, videoFileName);
+      await prisma.generatedFile.create({
+        data: { campaignId, url: videoUrl, type: 'video' }
+      });
+      console.log(`[Genblaze] Background video completed: ${videoUrl.substring(0, 80)}...`);
+    }
+  } catch (e: any) {
+    console.error('[Genblaze] Background video generation failed:', e?.message || e);
   }
 };
