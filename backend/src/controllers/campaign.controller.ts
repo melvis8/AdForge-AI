@@ -37,19 +37,16 @@ export const uploadImages = async (req: Request, res: Response) => {
       files.map(async (file) => {
         let b2Url = '';
         try {
-          console.log(`[Controller] Uploading ${file.filename} to B2...`);
           b2Url = await uploadFile(file.path, file.filename);
         } catch (uploadError) {
-          console.error('[Controller] B2 Upload failed, using mock URL', uploadError);
-          b2Url = `https://mock-storage.com/${file.filename}`;
+          console.error('[Controller] B2 Upload failed, using source URL', uploadError);
+          b2Url = ''; // Will use local file path as fallback
         }
 
         // Clean up local file after uploading to cloud
         try {
           fs.unlinkSync(file.path);
-        } catch (e) {
-          console.error('[Controller] Failed to delete local file:', e);
-        }
+        } catch (e) {}
 
         return prisma.asset.create({
           data: {

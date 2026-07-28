@@ -316,7 +316,7 @@ export default function ResultScreen({ route, navigation }: Props) {
         {/* Video Section */}
         {finalVideoUrl && !videoFailed ? (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Promotional Video</Text>
+            <Text style={styles.cardTitle}>Your Video</Text>
             <View style={[styles.videoContainer, { height: isTablet ? 340 : 220 }]}>
               <Video
                 source={{ uri: finalVideoUrl }}
@@ -338,7 +338,7 @@ export default function ResultScreen({ route, navigation }: Props) {
         {/* Poster Section */}
         {finalPosterUrl && !posterFailed ? (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>AI Generated Poster</Text>
+            <Text style={styles.cardTitle}>Your Campaign Image</Text>
             <Image
               source={{ uri: finalPosterUrl }}
               style={[styles.posterImage, { height: isTablet ? 450 : 300 }]}
