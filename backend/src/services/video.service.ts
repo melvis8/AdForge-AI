@@ -1,3 +1,4 @@
+import { fal } from '@fal-ai/client';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -8,9 +9,13 @@ interface VideoResult {
   projectId: string;
 }
 
+if (FAL_KEY) {
+  fal.config({ credentials: FAL_KEY });
+}
+
 /**
  * Creates a promotional video using fal.ai
- * Takes the campaign poster image and animates it into a short video clip
+ * Strategy: image-to-video from the generated poster, fallback to text-to-video
  */
 export const createPromotionalVideo = async (
   title: string,
@@ -22,69 +27,67 @@ export const createPromotionalVideo = async (
     throw new Error('FAL_API_KEY not configured');
   }
 
-  // If we have a poster image, animate it into a video
+  // Strategy 1: If we have a poster image, animate it into a video
   if (posterUrl) {
     try {
-      console.log('[fal.ai] Generating video from poster image...');
-      
-      const response = await fetch('https://queue.fal.run/fal-ai/fast-svd', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Key ${FAL_KEY}`,
-          'Content-Type': 'application/json',
+      console.log('[fal.ai] Generating video from poster image (Kling v3 image-to-video)...');
+      const result = await fal.subscribe('fal-ai/kling-video/v3/pro/image-to-video', {
+        input: {
+          start_image_url: posterUrl,
+          prompt: `Cinematic promotional video for "${title}". Smooth camera movement, professional lighting, vibrant brand colors, premium aesthetic. ${description.substring(0, 150)}`,
+          duration: '5',
+          generate_audio: false,
+          negative_prompt: 'blur, distort, low quality, text, watermark',
+          cfg_scale: 0.5,
         },
-        body: JSON.stringify({
-          image_url: posterUrl,
-          motion_bucket_id: 127,
-          noise_aug_strength: 0.02,
-          num_frames: 25,
-          fps: 6,
-          seed: Math.floor(Math.random() * 999999),
-        }),
+        logs: true,
+        onQueueUpdate: (update: any) => {
+          if (update.status === 'IN_PROGRESS') {
+            update.logs?.map((log: any) => log.message).forEach(console.log);
+          }
+        },
       });
 
-      if (response.ok) {
-        const result = await response.json();
-        if (result.video && result.video.url) {
-          console.log(`[fal.ai] Video generated: ${result.video.url}`);
-          return { url: result.video.url, projectId: 'fal-svd' };
-        }
+      const data = result.data as any;
+      if (data?.video?.url) {
+        console.log(`[fal.ai] Video generated: ${data.video.url}`);
+        return { url: data.video.url, projectId: 'fal-kling-i2v' };
       }
-      console.log(`[fal.ai] SVD response: ${response.status}`);
-    } catch (e) {
-      console.error('[fal.ai] SVD video failed:', e);
+    } catch (e: any) {
+      console.error('[fal.ai] Kling image-to-video failed:', e?.message || e);
     }
   }
 
-  // Fallback: Use MiniMax for text-to-video
+  // Strategy 2: Text-to-video
   try {
-    console.log('[fal.ai] Generating video with MiniMax...');
-    
-    const videoPrompt = `Professional promotional video for: ${title}. ${description.substring(0, 200)}. Cinematic lighting, smooth camera movement, premium brand aesthetic, vibrant colors.`;
-    
-    const response = await fetch('https://queue.fal.run/fal-ai/minimax-video', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Key ${FAL_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    console.log('[fal.ai] Generating video from text (Kling v3 text-to-video)...');
+    const videoPrompt = `Professional promotional advertisement for "${title}". ${description.substring(0, 200)}. Cinematic lighting, smooth camera pan, vibrant colors, premium brand aesthetic, studio quality.`;
+
+    const result = await fal.subscribe('fal-ai/kling-video/v3/pro/text-to-video', {
+      input: {
         prompt: videoPrompt,
-        num_seconds: 6,
-      }),
+        duration: '5',
+        aspect_ratio: '1:1',
+        generate_audio: false,
+        negative_prompt: 'blur, distort, low quality, text, watermark',
+        cfg_scale: 0.5,
+      },
+      logs: true,
+      onQueueUpdate: (update: any) => {
+        if (update.status === 'IN_PROGRESS') {
+          update.logs?.map((log: any) => log.message).forEach(console.log);
+        }
+      },
     });
 
-    if (response.ok) {
-      const result = await response.json();
-      if (result.video && result.video.url) {
-        console.log(`[fal.ai] MiniMax video generated: ${result.video.url}`);
-        return { url: result.video.url, projectId: 'fal-minimax' };
-      }
+    const data = result.data as any;
+    if (data?.video?.url) {
+      console.log(`[fal.ai] Text-to-video generated: ${data.video.url}`);
+      return { url: data.video.url, projectId: 'fal-kling-t2v' };
     }
-    console.log(`[fal.ai] MiniMax response: ${response.status}`);
-  } catch (e) {
-    console.error('[fal.ai] MiniMax video failed:', e);
+  } catch (e: any) {
+    console.error('[fal.ai] Kling text-to-video failed:', e?.message || e);
   }
 
-  throw new Error('fal.ai video generation failed');
+  throw new Error('fal.ai video generation failed - all methods exhausted');
 };

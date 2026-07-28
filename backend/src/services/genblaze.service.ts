@@ -3,6 +3,7 @@ import { createPromotionalVideo } from './video.service';
 import { uploadFromUrl, uploadBuffer } from './storage.service';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
+import { fal } from '@fal-ai/client';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -10,6 +11,11 @@ dotenv.config();
 const prisma = new PrismaClient();
 const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
+const FAL_KEY = process.env.FAL_API_KEY || '';
+
+if (FAL_KEY) {
+  fal.config({ credentials: FAL_KEY });
+}
 
 const LANG_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
@@ -50,22 +56,26 @@ const generateCampaignTitle = async (description: string, language: string): Pro
 };
 
 /**
- * Generate a campaign poster image.
- * 1. Use Pollinations.ai to generate the image (free, no API key, generates from prompt)
- * 2. Upload the Pollinations image to B2 for persistence
- * 3. If B2 fails, return the Pollinations URL directly (it's still a real working URL)
+ * Generate a campaign poster image using fal.ai Flux Pro.
+ * 1. Use OpenAI to write a detailed visual prompt based on the user's product
+ * 2. Generate image with fal.ai Flux Pro v1.1
+ * 3. Upload to B2 for persistence, fallback to fal CDN URL
  */
 const generatePosterImage = async (title: string, description: string, campaignId: string, language: string): Promise<string> => {
+  if (!FAL_KEY) {
+    throw new Error('FAL_API_KEY not configured');
+  }
+
   // Step 1: Generate a detailed visual prompt using OpenAI
   let visualPrompt = `professional advertising poster for ${title}, premium brand aesthetic, vibrant colors, 8k photorealistic, studio lighting, modern design`;
   try {
     const promptCompletion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You write image generation prompts. Output ONLY the prompt, nothing else.' },
-        { role: 'user', content: `Write a detailed, vivid image prompt for an advertising poster. The poster is for: "${title}" - ${description}. Describe the exact scene, products, colors, lighting, mood, and style. Be very specific about what should appear in the image. Keep under 300 characters.` }
+        { role: 'system', content: 'You write image generation prompts for Flux Pro AI. Output ONLY the prompt, nothing else. Be extremely detailed and vivid.' },
+        { role: 'user', content: `Write a detailed, vivid image prompt for an advertising poster. The poster is for: "${title}" - ${description}. Describe the exact scene, products, colors, lighting, mood, and style. Be very specific about what should appear in the image. Keep under 400 characters.` }
       ],
-      max_tokens: 150,
+      max_tokens: 200,
       temperature: 0.8,
     });
     const generated = promptCompletion.choices[0]?.message?.content?.trim();
@@ -76,52 +86,49 @@ const generatePosterImage = async (title: string, description: string, campaignI
     console.error('[OpenAI] Image prompt generation failed:', e);
   }
 
-  console.log(`[Genblaze] Image prompt: ${visualPrompt}`);
+  console.log(`[Genblaze] Flux Pro prompt: ${visualPrompt}`);
 
-  // Step 2: Generate image with Pollinations.ai
-  const encodedPrompt = encodeURIComponent(visualPrompt);
-  const randomSeed = Math.floor(Math.random() * 1000000);
-  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${randomSeed}&enhance=true`;
-
-  // Step 3: Download the image and upload to B2
+  // Step 2: Generate image with fal.ai Flux Pro v1.1
   try {
-    console.log(`[Genblaze] Downloading image from Pollinations...`);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout for image generation
-    const response = await fetch(pollinationsUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+    console.log(`[Genblaze] Generating image with fal.ai Flux Pro...`);
+    const result = await fal.subscribe('fal-ai/flux-pro/v1.1', {
+      input: {
+        prompt: visualPrompt,
+        image_size: 'square_hd',
+        num_images: 1,
+        output_format: 'jpeg',
+        safety_tolerance: '3',
+        enhance_prompt: true,
+      },
+      logs: true,
+      onQueueUpdate: (update: any) => {
+        if (update.status === 'IN_PROGRESS') {
+          update.logs?.map((log: any) => log.message).forEach(console.log);
+        }
+      },
+    });
 
-    if (response.ok) {
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      const contentType = response.headers.get('content-type') || 'image/jpeg';
-      const fileName = `campaigns/${campaignId}/poster_${Date.now()}.jpg`;
+    const data = result.data as any;
+    const imageUrl = data?.images?.[0]?.url;
 
-      // Try to upload to B2
+    if (imageUrl) {
+      console.log(`[Genblaze] Image generated: ${imageUrl}`);
+
+      // Step 3: Upload to B2 for persistence
       try {
-        const b2Url = await uploadBuffer(buffer, fileName, contentType);
+        const b2Url = await uploadFromUrl(imageUrl, `campaigns/${campaignId}/poster_${Date.now()}.jpg`);
         console.log(`[Genblaze] Poster saved to B2: ${b2Url}`);
         return b2Url;
       } catch (b2Err) {
-        console.log(`[Genblaze] B2 upload failed, saving to local uploads/`);
-        // Save locally as fallback
-        const fs = require('fs');
-        const path = require('path');
-        const localDir = path.join(process.cwd(), 'uploads', 'generated', campaignId);
-        fs.mkdirSync(localDir, { recursive: true });
-        const localPath = path.join(localDir, `poster_${Date.now()}.jpg`);
-        fs.writeFileSync(localPath, buffer);
-        console.log(`[Genblaze] Poster saved locally: ${localPath}`);
-        // Return the Pollinations URL since it's a real working URL
-        return pollinationsUrl;
+        console.log(`[Genblaze] B2 upload failed, using fal CDN URL`);
+        return imageUrl;
       }
     }
-  } catch (e) {
-    console.error('[Genblaze] Image download failed:', e);
+  } catch (e: any) {
+    console.error('[Genblaze] fal.ai image generation failed:', e?.message || e);
   }
 
-  // Last resort: return the Pollinations URL directly (it will generate on access)
-  return pollinationsUrl;
+  throw new Error('Image generation failed - fal.ai returned no image');
 };
 
 const generateCaption = async (title: string, description: string, language: string): Promise<string> => {
@@ -132,39 +139,58 @@ const generateCaption = async (title: string, description: string, language: str
       messages: [
         {
           role: 'system',
-          content: `You are the world's best social media copywriter. You write captions that go viral, drive sales, and build brands. Your captions are LONG, detailed, and tell a story. Write in ${langName}.`
+          content: `You are the world's #1 social media copywriter who has generated viral posts for Nike, Apple, and Coca-Cola. You write captions that make people stop scrolling, feel emotions, and BUY. Your captions are LONG (500-800 words), tell a story, and convert readers into customers. Write in ${langName}. NEVER write short captions.`
         },
         {
           role: 'user',
-          content: `Write a POWERFUL, LONG-FORM social media caption (300-500 words) for this EXACT campaign. This caption should be detailed enough to post directly on Instagram, Facebook, or LinkedIn without any editing.
+          content: `Write a LONG-FORM, POWERFUL social media caption (500-800 words minimum!) for this EXACT campaign. This should be the kind of caption that goes VIRAL on Instagram, Facebook, and LinkedIn.
 
 CAMPAIGN TITLE: "${title}"
-CAMPAIGN DETAILS/DESCRIPTION: ${description}
+CAMPAIGN DETAILS: ${description}
 
-STRUCTURE YOUR CAPTION LIKE THIS:
+CAPTION STRUCTURE (follow this exactly):
 
-1. HOOK (first line that stops the scroll - question, bold statement, or surprising fact)
-2. STORY (2-3 paragraphs about the product/service, its benefits, why it's special, who it's for)
-3. SOCIAL PROOF (mention quality, customer satisfaction, or unique selling points)
-4. URGENCY (limited time offer, limited stock, exclusive deal, seasonal relevance)
-5. CALL TO ACTION (clear instruction on what to do next)
-6. HASHTAGS (5-8 relevant trending hashtags)
-7. EMOJIS (strategic placement throughout, not too many)
+**LINE 1 - THE HOOK (stops the scroll)**
+Start with a question, bold statement, or surprising fact that makes people READ MORE.
 
-The caption MUST:
-- Be DIRECTLY about THIS specific product/service from the description
-- Reference specific details from the user's description (ingredients, location, price, discount, target audience)
-- Tell a compelling story that makes people FEEL something
-- Be long enough to be a complete social media post (300-500 words)
-- Feel authentic and personal, not corporate or generic
-- Include specific numbers, prices, or percentages when mentioned in the description
-- Work for Instagram, Facebook, LinkedIn, or Twitter`
+**PARAGRAPH 1 - THE STORY (connect emotionally)**
+Tell the story behind this product/service. Why does it exist? What problem does it solve? Who created it and why?
+
+**PARAGRAPH 2 - THE DETAILS (inform and impress)**
+Describe exactly what makes this product/service special. Mention specific features, ingredients, prices, discounts, locations, or any detail from the description.
+
+**PARAGRAPH 3 - THE BENEFITS (show the transformation)**
+Explain how this product/service will CHANGE the customer's life. What will they gain? What pain will be eliminated?
+
+**PARAGRAPH 4 - THE SOCIAL PROOF (build trust)**
+Mention quality guarantees, customer satisfaction, awards, or any reason to trust this brand.
+
+**PARAGRAPH 5 - THE URGENCY (drive action)**
+Create urgency - limited time, limited stock, exclusive deal, seasonal, first 100 customers, etc.
+
+**PARAGRAPH 6 - THE CTA (tell them what to do)**
+Clear call to action: follow, visit, order, DM, click link, etc.
+
+**PARAGRAPH 7 - THE HASHTAGS**
+5-8 relevant trending hashtags.
+
+RULES:
+- Write MINIMUM 500 words
+- Reference SPECIFIC details from the description (prices, locations, ingredients, discounts, target audience)
+- Use emojis strategically (not too many, but enough to break text)
+- Feel personal and authentic, like a real person talking
+- Use short paragraphs for readability
+- Include specific numbers, percentages, or details when available
+- Work perfectly for Instagram, Facebook, LinkedIn, and Twitter
+- The caption should make someone who reads it FEEL something and WANT to take action`
         }
       ],
-      max_tokens: 1200,
+      max_tokens: 2000,
       temperature: 0.85,
     });
-    return completion.choices[0]?.message?.content?.trim() || '';
+    const caption = completion.choices[0]?.message?.content?.trim() || '';
+    console.log(`[Genblaze] Caption length: ${caption.split(' ').length} words`);
+    return caption;
   } catch (e) {
     console.error('[OpenAI] Caption failed:', e);
     return '';
@@ -247,17 +273,20 @@ export const generateCampaignAssets = async (campaignId: string) => {
       data: { campaignId, url: '', type: 'caption', content: caption }
     });
 
-    // Step 5: Generate video (always try with fal.ai)
+    // Step 5: Generate video with fal.ai (Kling v3)
     let videoUrl = '';
     try {
+      console.log(`[Genblaze] Starting video generation...`);
       const videoResult = await createPromotionalVideo(title, description, posterUrl, language);
       if (videoResult && videoResult.url) {
         const videoFileName = `campaigns/${campaignId}/video_${Date.now()}.mp4`;
         videoUrl = await uploadFromUrl(videoResult.url, videoFileName);
+        console.log(`[Genblaze] Video saved: ${videoUrl}`);
       }
-    } catch (e) {
-      console.error('[Genblaze] Video generation failed:', e);
-      videoUrl = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+    } catch (e: any) {
+      console.error('[Genblaze] Video generation failed:', e?.message || e);
+      // Don't set a broken fallback - leave empty so the UI shows "video generation in progress"
+      videoUrl = '';
     }
     await prisma.generatedFile.create({
       data: { campaignId, url: videoUrl, type: 'video' }
