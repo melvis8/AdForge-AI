@@ -45,7 +45,8 @@
         {
           "microphonePermission": "Allow AdForge AI to record audio for voice-to-text campaign prompts."
         }
-      ]
+      ],
+      "expo-asset"
     ]
   }
 }

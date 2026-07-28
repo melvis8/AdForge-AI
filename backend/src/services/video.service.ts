@@ -10,13 +10,13 @@ interface VideoResult {
 }
 
 const CTA_TEXT: Record<string, string> = {
-  en: '🔥 Order Now!', fr: '🔥 Commandez !', es: '🔥 ¡Ordena ahora!',
-  de: '🔥 Jetzt bestellen!', pt: '🔥 Peça agora!', zh: '🔥 立即订购！',
-  ja: '🔥今すぐ注文！', ko: '🔥 지금 주문!', ar: '!اطلب الآن',
-  ha: '🔥 Yi Aminta Yanzu!', yo: '🔥 Ra Si Bayi Lọwọlọwọ!',
-  sw: '🔥 Agiza Sasa!', it: '🔥 Ordina Ora!', nl: '🔥 Bestel Nu!',
-  ru: '🔥 Закажите сейчас!', hi: '🔥 अभी ऑर्डर करें!', tr: '🔥 Hemen Sipariş Ver!',
-  vi: '🔥 Đặt hàng ngay!', th: '🔥 สั่งซื้อตอนนี้!', id: '🔥 Pesan Sekarang!',
+  en: 'Order Now - Limited Time!', fr: 'Commandez Maintenant!', es: 'Ordena Ya - Tiempo Limitado!',
+  de: 'Jetzt Bestellen!', pt: 'Peça Agora - Tempo Limitado!', zh: '立即订购 - 限时优惠！',
+  ja: '今すぐ注文 - 数量限定！', ko: '지금 주문 - 한정 판매!', ar: '!اطلب الآن - لفترة محدودة',
+  ha: 'Yi Aminta Yanzu!', yo: 'Ra Si Bayi Lọwọlọwọ!',
+  sw: 'Agiza Sasa - Muda Umeishia!', it: 'Ordina Ora - Tempo Limitato!', nl: 'Bestel Nu - Beperkte Tijd!',
+  ru: 'Закажите сейчас!', hi: 'अभी ऑर्डर करें - सीमित समय!', tr: 'Hemen Sipariş Ver!',
+  vi: 'Đặt hàng ngay - Thời gian có hạn!', th: 'สั่งซื้อตอนนี้ - เวลาจำกัด!', id: 'Pesan Sekarang - Waktu Terbatas!',
 };
 
 const POWERED_TEXT: Record<string, string> = {
@@ -186,9 +186,16 @@ export const createPromotionalVideo = async (
     ],
   };
 
+  if (!API_KEY) {
+    console.warn('[JSON2Video] API key not set, skipping video generation');
+    throw new Error('JSON2VIDEO_API_KEY not configured');
+  }
+
   console.log('[JSON2Video] Submitting video generation job...');
 
   // 1. Submit the video generation job
+  const submitController = new AbortController();
+  const submitTimeout = setTimeout(() => submitController.abort(), 15000);
   const submitResponse = await fetch(API_BASE, {
     method: 'POST',
     headers: {
@@ -196,7 +203,9 @@ export const createPromotionalVideo = async (
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(moviePayload),
+    signal: submitController.signal,
   });
+  clearTimeout(submitTimeout);
 
   if (!submitResponse.ok) {
     const errorText = await submitResponse.text();
@@ -208,15 +217,19 @@ export const createPromotionalVideo = async (
   const projectId = submitData.project;
   console.log(`[JSON2Video] Job submitted. Project ID: ${projectId}`);
 
-  // 2. Poll for completion (max 2 minutes)
-  const maxAttempts = 24;
+  // 2. Poll for completion (max 60 seconds)
+  const maxAttempts = 12;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 5000)); // Wait 5s between polls
 
+    const pollController = new AbortController();
+    const pollTimeout = setTimeout(() => pollController.abort(), 10000);
     const statusResponse = await fetch(`${API_BASE}?project=${projectId}`, {
       method: 'GET',
       headers: { 'x-api-key': API_KEY },
+      signal: pollController.signal,
     });
+    clearTimeout(pollTimeout);
 
     if (!statusResponse.ok) continue;
 

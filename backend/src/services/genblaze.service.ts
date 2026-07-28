@@ -9,10 +9,13 @@ dotenv.config();
 const prisma = new PrismaClient();
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
-/**
- * Detects the language of the input text using Gemini and returns
- * the ISO 639-1 language code.
- */
+const LANG_NAMES: Record<string, string> = {
+  en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
+  zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ar: 'Arabic', ha: 'Hausa',
+  yo: 'Yoruba', sw: 'Swahili', it: 'Italian', nl: 'Dutch', ru: 'Russian',
+  hi: 'Hindi', tr: 'Turkish', vi: 'Vietnamese', th: 'Thai', id: 'Indonesian',
+};
+
 const detectLanguage = async (text: string): Promise<string> => {
   try {
     const response = await genAI.models.generateContent({
@@ -23,28 +26,17 @@ const detectLanguage = async (text: string): Promise<string> => {
     console.log(`[Genblaze] Detected language: ${lang}`);
     return lang;
   } catch (e) {
-    console.error('[Genblaze] Language detection failed, defaulting to English:', e);
+    console.error('[Genblaze] Language detection failed:', e);
     return 'en';
   }
 };
 
-/**
- * Generates a smart campaign title from the user's description using Gemini.
- * The title is generated in the same language as the description.
- */
 const generateCampaignTitle = async (description: string, language: string): Promise<string> => {
+  const langName = LANG_NAMES[language] || 'English';
   try {
-    const langNames: Record<string, string> = {
-      en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
-      zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ar: 'Arabic', ha: 'Hausa',
-      yo: 'Yoruba', sw: 'Swahili', it: 'Italian', nl: 'Dutch', ru: 'Russian',
-      hi: 'Hindi', tr: 'Turkish', vi: 'Vietnamese', th: 'Thai', id: 'Indonesian',
-    };
-    const langName = langNames[language] || 'the same language as the input';
-
     const response = await genAI.models.generateContent({
       model: 'gemini-2.0-flash',
-      contents: `Based on this campaign description, generate a short, catchy campaign title (max 6 words, no quotes, no punctuation at the end). The title MUST be written in ${langName}. Description: "${description}"`,
+      contents: `You are an expert copywriter for a top advertising agency. Based on this campaign description, generate ONE short, powerful, high-impact campaign title (max 6 words). The title must be in ${langName}. No quotes, no period at the end. It should create urgency and excitement.\n\nDescription: "${description}"`,
     });
     const title = response.text?.trim() || description.substring(0, 50);
     console.log(`[Genblaze] Generated title (${language}): "${title}"`);
@@ -55,15 +47,6 @@ const generateCampaignTitle = async (description: string, language: string): Pro
   }
 };
 
-/**
- * Generates a campaign poster image using Gemini's native image generation.
- * Falls back to Pollinations.ai if Gemini image generation is unavailable.
- * Image dimensions are proportional to the campaign context:
- *  - Social media poster: 1024x1024 (square, Instagram/WhatsApp)
- *  - Landscape banner: 1024x640 (16:10, Facebook/Twitter)
- *  - Portrait story: 640x1024 (9:16, Instagram/TikTok stories)
- * The aspect ratio is selected based on keywords in the description.
- */
 const determineImageDimensions = (description: string): { width: number; height: number; aspectLabel: string } => {
   const lower = description.toLowerCase();
   if (lower.includes('story') || lower.includes('reel') || lower.includes('tiktok') || lower.includes('vertical') || lower.includes('portrait')) {
@@ -72,30 +55,35 @@ const determineImageDimensions = (description: string): { width: number; height:
   if (lower.includes('banner') || lower.includes('cover') || lower.includes('landscape') || lower.includes('header') || lower.includes('facebook cover') || lower.includes('twitter')) {
     return { width: 1024, height: 640, aspectLabel: 'landscape (16:10)' };
   }
-  if (lower.includes('poster') || lower.includes('flyer') || lower.includes('square') || lower.includes('instagram post') || lower.includes('whatsapp')) {
-    return { width: 1024, height: 1024, aspectLabel: 'square (1:1)' };
-  }
-  // Default: square for social media
   return { width: 1024, height: 1024, aspectLabel: 'square (1:1)' };
 };
 
 const generatePosterImage = async (title: string, description: string, campaignId: string, language: string): Promise<string> => {
   const { width, height, aspectLabel } = determineImageDimensions(description);
-  console.log(`[Genblaze] Image dimensions: ${width}x${height} (${aspectLabel})`);
+  const langName = LANG_NAMES[language] || 'English';
 
-  // Try Gemini native image generation first
+  // Try Gemini native image generation
   try {
     console.log('[Genblaze] Attempting Gemini native image generation...');
-    const langNames: Record<string, string> = {
-      en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
-      zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ar: 'Arabic', ha: 'Hausa',
-      yo: 'Yoruba', sw: 'Swahili',
-    };
-    const langName = langNames[language] || 'English';
-
     const response = await genAI.models.generateContent({
       model: 'gemini-2.0-flash-exp',
-      contents: `Create a stunning, professional, high-quality advertising poster image for a campaign called "${title}". The campaign is about: ${description}. The image text and visual style should be appropriate for a ${langName}-speaking audience. The image aspect ratio should be ${aspectLabel}. Make it visually striking with vibrant colors, professional typography feel, and modern design aesthetics. The image should look like a premium marketing poster.`,
+      contents: `You are a world-class advertising creative director. Design a STUNNING, high-converting advertising poster for a campaign.
+
+Campaign Title: "${title}"
+Campaign Description: ${description}
+
+Requirements:
+- Aspect ratio: ${aspectLabel} (${width}x${height})
+- Style: Premium brand aesthetic, clean modern design
+- Color palette: Rich, vibrant colors that evoke desire and trust
+- Typography feel: Bold headline text area at the top
+- Layout: Professional advertising layout with clear visual hierarchy
+- The poster should make viewers STOP scrolling and want to buy immediately
+- Include visual elements that match the product/service described
+- Make it look like it was designed by a top-tier creative agency
+- Target audience: ${langName}-speaking market
+- The image should be photorealistic or hyper-stylized, NOT cartoonish
+- Add subtle premium touches: gradients, depth, shadows, bokeh effects`,
       config: {
         responseModalities: ['IMAGE'],
       },
@@ -110,9 +98,15 @@ const generatePosterImage = async (title: string, description: string, campaignI
             console.log('[Genblaze] Gemini returned image data, uploading to B2...');
             const imageBuffer = Buffer.from(part.inlineData.data, 'base64');
             const fileName = `campaigns/${campaignId}/poster_${Date.now()}.png`;
-            const b2Url = await uploadBuffer(imageBuffer, fileName, part.inlineData.mimeType || 'image/png');
-            console.log(`[Genblaze] Poster uploaded to B2: ${b2Url}`);
-            return b2Url;
+            try {
+              const b2Url = await uploadBuffer(imageBuffer, fileName, part.inlineData.mimeType || 'image/png');
+              console.log(`[Genblaze] Poster uploaded to B2: ${b2Url}`);
+              return b2Url;
+            } catch {
+              // B2 upload failed, save locally as temp file and return a data URL approach
+              // Instead, save to disk and serve via a temp endpoint - or just use Pollinations
+              console.log('[Genblaze] B2 upload failed for Gemini image, using Pollinations fallback');
+            }
           }
         }
       }
@@ -122,72 +116,31 @@ const generatePosterImage = async (title: string, description: string, campaignI
     console.error('[Genblaze] Gemini image generation failed:', geminiError);
   }
 
-  // Fallback: Use Gemini text model to generate a prompt, then Pollinations.ai to generate the image
+  // Fallback: Pollinations.ai
   try {
     console.log('[Genblaze] Falling back to Pollinations.ai...');
     const promptResponse = await genAI.models.generateContent({
       model: 'gemini-2.0-flash',
-      contents: `Generate ONLY a comma-separated list of highly descriptive visual keywords for a beautiful, cinematic, and professional advertising poster for: ${title} - ${description}. Do not include any conversational text. Use words like 8k, photorealistic, vibrant.`,
+      contents: `You are a creative director writing an image generation prompt. Generate ONLY a detailed, comma-separated visual description for a stunning advertising poster.\n\nCampaign: "${title}"\nAbout: ${description}\n\nThe prompt must include: style (e.g. "professional advertising photography"), lighting (e.g. "golden hour", "studio lighting"), mood, color palette, composition, and "8k, photorealistic, advertising campaign, premium brand quality".\n\nOutput ONLY the prompt keywords, nothing else.`,
     });
-    const imagePrompt = promptResponse.text?.trim() || `professional advertising poster for ${title}`;
+    const imagePrompt = promptResponse.text?.trim() || `professional advertising poster for ${title}, premium brand, vibrant colors, 8k, photorealistic`;
     
     const encodedPrompt = encodeURIComponent(imagePrompt);
     const randomSeed = Math.floor(Math.random() * 1000000);
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=${width}&height=${height}&seed=${randomSeed}`;
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=${width}&height=${height}&seed=${randomSeed}&enhance=true`;
     
-    // Download from Pollinations and upload to B2
-    try {
-      const fileName = `campaigns/${campaignId}/poster_${Date.now()}.jpg`;
-      const b2Url = await uploadFromUrl(pollinationsUrl, fileName);
-      console.log(`[Genblaze] Pollinations poster uploaded to B2: ${b2Url}`);
-      return b2Url;
-    } catch (uploadError) {
-      console.error('[Genblaze] B2 upload of Pollinations image failed, retrying upload...', uploadError);
-      // Retry B2 upload once more
-      try {
-        const retryFileName = `campaigns/${campaignId}/poster_retry_${Date.now()}.jpg`;
-        const retryUrl = await uploadFromUrl(pollinationsUrl, retryFileName);
-        return retryUrl;
-      } catch (retryErr) {
-        console.error('[Genblaze] Retry B2 upload also failed:', retryErr);
-        // As a last resort, still upload to B2 via buffer
-        try {
-          const imgResponse = await fetch(pollinationsUrl);
-          if (imgResponse.ok) {
-            const arrBuf = await imgResponse.arrayBuffer();
-            const buf = Buffer.from(arrBuf);
-            const bufFileName = `campaigns/${campaignId}/poster_buf_${Date.now()}.jpg`;
-            const bufUrl = await uploadBuffer(buf, bufFileName, 'image/jpeg');
-            return bufUrl;
-          }
-        } catch (bufErr) {
-          console.error('[Genblaze] Buffer upload also failed:', bufErr);
-        }
-        return pollinationsUrl;
-      }
-    }
+    // Download and upload to B2 (uploadFromUrl returns sourceUrl if B2 fails)
+    const fileName = `campaigns/${campaignId}/poster_${Date.now()}.jpg`;
+    const resultUrl = await uploadFromUrl(pollinationsUrl, fileName);
+    console.log(`[Genblaze] Poster URL: ${resultUrl}`);
+    return resultUrl;
   } catch (fallbackError) {
-    console.error('[Genblaze] All image generation failed:', fallbackError);
-    // Generate a placeholder using B2 - upload a minimal placeholder
-    const placeholderUrl = 'https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80';
-    try {
-      const fileName = `campaigns/${campaignId}/poster_placeholder_${Date.now()}.jpg`;
-      return await uploadFromUrl(placeholderUrl, fileName);
-    } catch {
-      return placeholderUrl;
-    }
+    console.error('[Genblaze] Pollinations fallback failed:', fallbackError);
+    // Return a reliable placeholder via Unsplash
+    return `https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=${width}&q=80`;
   }
 };
 
-/**
- * Generates the campaign assets:
- * 1. Detect language of the prompt
- * 2. Generate a smart campaign title in the detected language
- * 3. Generate an image using Gemini (uploaded to Backblaze B2)
- * 4. Generate a caption using Gemini in the detected language
- * 5. Generate a promotional video via JSON2Video (uploaded to Backblaze B2)
- * 6. Generate marketing strategy tips in the detected language
- */
 export const generateCampaignAssets = async (campaignId: string) => {
   try {
     const campaign = await prisma.campaign.findUnique({
@@ -197,7 +150,6 @@ export const generateCampaignAssets = async (campaignId: string) => {
 
     if (!campaign) throw new Error('Campaign not found');
 
-    // Update status
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'generating' },
@@ -205,48 +157,49 @@ export const generateCampaignAssets = async (campaignId: string) => {
 
     const description = campaign.description || 'A great product';
 
-    // 0. Detect language
+    // Step 0: Detect language
     console.log(`[Genblaze] Step 0: Detecting language...`);
     const language = await detectLanguage(description);
-    console.log(`[Genblaze] Detected language: ${language}`);
+    const langName = LANG_NAMES[language] || 'English';
+    console.log(`[Genblaze] Detected language: ${language} (${langName})`);
 
-    // 1. Generate campaign title in detected language
-    console.log(`[Genblaze] Step 1: Generating title in ${language}...`);
+    // Step 1: Generate title
+    console.log(`[Genblaze] Step 1: Generating title...`);
     const title = await generateCampaignTitle(description, language);
+    await prisma.campaign.update({ where: { id: campaignId }, data: { title } });
 
-    // Update campaign title in DB
-    await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { title },
-    });
-
-    // 2. Generate poster image (Gemini → B2)
-    console.log(`[Genblaze] Step 2: Generating poster for "${title}"...`);
+    // Step 2: Generate poster image
+    console.log(`[Genblaze] Step 2: Generating poster...`);
     const posterUrl = await generatePosterImage(title, description, campaignId, language);
-
     await prisma.generatedFile.create({
-      data: {
-        campaignId,
-        url: posterUrl,
-        type: 'poster',
-      }
+      data: { campaignId, url: posterUrl, type: 'poster' }
     });
 
-    // 3. Generate caption in detected language
-    console.log(`[Genblaze] Step 3: Generating caption in ${language}...`);
-    const langNames: Record<string, string> = {
-      en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
-      zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ar: 'Arabic', ha: 'Hausa',
-      yo: 'Yoruba', sw: 'Swahili', it: 'Italian', nl: 'Dutch', ru: 'Russian',
-      hi: 'Hindi', tr: 'Turkish', vi: 'Vietnamese', th: 'Thai', id: 'Indonesian',
-    };
-    const langName = langNames[language] || 'English';
-
+    // Step 3: Generate HIGH-CONVERTING caption
+    console.log(`[Genblaze] Step 3: Generating powerful caption...`);
     let caption = '';
     try {
       const captionResponse = await genAI.models.generateContent({
         model: 'gemini-2.0-flash',
-        contents: `Write a short, catchy, and professional social media marketing caption for a campaign titled "${title}" with this description: "${description}". The caption MUST be written in ${langName}. Include appropriate emojis and 3 trending hashtags relevant to the ${langName}-speaking audience.`,
+        contents: `You are the world's best social media copywriter. Write a HIGH-CONVERTING social media caption for this campaign that makes people WANT to click, buy, or take action immediately.
+
+Campaign Title: "${title}"
+Campaign Description: ${description}
+Language: ${langName}
+
+Rules:
+- Write in ${langName}
+- Open with a HOOK that stops the scroll (question, bold statement, or surprising fact)
+- Create urgency (limited time, exclusive, don't miss out)
+- Include a clear call-to-action
+- Use 3-5 relevant trending hashtags
+- Add strategic emojis (not too many, not too few - 4-6 max)
+- Keep it under 200 words
+- Make it feel personal, like talking to a friend
+- End with urgency or FOMO
+
+Example of a great caption:
+"Stop scrolling. Your skin deserves this. ✨ Our new Vitamin C serum is dermatologist-tested, 100% natural, and already sold out 3 times. Over 10,000 happy customers can't be wrong. Ready for your glow-up? Link in bio before it's gone again. 🔥 #SkincareRoutine #GlowUp #NaturalBeauty #VitaminC #SelfCare"`,
       });
       caption = captionResponse.text?.trim() || '';
     } catch (e) {
@@ -254,66 +207,51 @@ export const generateCampaignAssets = async (campaignId: string) => {
     }
 
     if (!caption) {
-      caption = description.substring(0, 150);
+      caption = `Discover ${title} - a game-changer you don't want to miss. ${description}`;
     }
     
     await prisma.generatedFile.create({
-      data: {
-        campaignId,
-        url: '',
-        type: 'caption',
-        content: caption,
-      }
+      data: { campaignId, url: '', type: 'caption', content: caption }
     });
 
-    // 4. Generate promotional video via JSON2Video
+    // Step 4: Generate video
     console.log(`[Genblaze] Step 4: Generating video...`);
     let videoUrl = '';
     try {
       const videoResult = await createPromotionalVideo(title, description, posterUrl, language);
-      
-      // Always upload video to B2
-      try {
-        const videoFileName = `campaigns/${campaignId}/video_${Date.now()}.mp4`;
-        const b2VideoUrl = await uploadFromUrl(videoResult.url, videoFileName);
-        videoUrl = b2VideoUrl;
-        console.log(`[Genblaze] Video uploaded to B2: ${videoUrl}`);
-      } catch (uploadError) {
-        console.error('[Genblaze] B2 video upload failed, retrying...', uploadError);
-        try {
-          const retryFileName = `campaigns/${campaignId}/video_retry_${Date.now()}.mp4`;
-          videoUrl = await uploadFromUrl(videoResult.url, retryFileName);
-        } catch {
-          videoUrl = videoResult.url;
-        }
-      }
+      const videoFileName = `campaigns/${campaignId}/video_${Date.now()}.mp4`;
+      videoUrl = await uploadFromUrl(videoResult.url, videoFileName);
+      console.log(`[Genblaze] Video URL: ${videoUrl}`);
     } catch (videoError) {
       console.error('[Genblaze] Video generation failed:', videoError);
-      // Upload fallback video to B2
-      const fallbackVideo = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-      try {
-        const fallbackFileName = `campaigns/${campaignId}/video_fallback_${Date.now()}.mp4`;
-        videoUrl = await uploadFromUrl(fallbackVideo, fallbackFileName);
-      } catch {
-        videoUrl = fallbackVideo;
-      }
+      // Use a reliable fallback video
+      videoUrl = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
     }
 
     await prisma.generatedFile.create({
-      data: {
-        campaignId,
-        url: videoUrl,
-        type: 'video',
-      }
+      data: { campaignId, url: videoUrl, type: 'video' }
     });
 
-    // 5. Generate marketing strategy suggestions in detected language
-    console.log(`[Genblaze] Step 5: Generating strategy suggestions in ${language}...`);
+    // Step 5: Generate POWERFUL marketing strategy
+    console.log(`[Genblaze] Step 5: Generating strategy...`);
     let suggestions = '';
     try {
       const strategyResponse = await genAI.models.generateContent({
         model: 'gemini-2.0-flash',
-        contents: `Give exactly 3 concise, actionable marketing strategy tips for a campaign titled "${title}" about: "${description}". The tips MUST be written in ${langName}. Number them 1-3. Be specific and practical for the ${langName}-speaking market.`,
+        contents: `You are a world-class digital marketing strategist with 15 years of experience running campaigns for Fortune 500 brands. Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips for this campaign.
+
+Campaign Title: "${title}"
+Campaign Description: ${description}
+Language: ${langName}
+
+Requirements:
+- Write in ${langName}
+- Each tip must be SPECIFIC to this campaign (not generic advice)
+- Include concrete numbers, platforms, and timing
+- Focus on ROI-driving actions
+- Format as numbered list (1-3)
+- Each tip should be 1-2 sentences max
+- Be bold and decisive like a real strategist would be`,
       });
       suggestions = strategyResponse.text?.trim() || '';
     } catch (e) {
@@ -322,28 +260,23 @@ export const generateCampaignAssets = async (campaignId: string) => {
 
     if (!suggestions) {
       suggestions = language === 'fr'
-        ? "1. Publiez ceci sur Instagram Stories aux heures de pointe.\n2. Lancez une promotion flash de 48 heures.\n3. Partagez sur WhatsApp Status pour une portée locale."
-        : "1. Post this on Instagram Stories at peak hours.\n2. Run a 48-hour flash promotion.\n3. Share on WhatsApp Status for local reach.";
+        ? "1. Lancez une campagne Instagram Reels ciblant les 18-35 ans aux heures de pointe (19h-21h) avec un budget de 50-100 FCFA par clic.\n2. Créez une offre flash 48h exclusive WhatsApp Status avec un code promo pour créer l'urgence.\n3. Contactez 5-10 micro-influenceurs locaux pour un partenariat de contenu authentique."
+        : "1. Run an Instagram Reels campaign targeting 18-35 year-olds during peak hours (7-9 PM) with $0.50-1.00 CPC budget for maximum reach.\n2. Create a 48-hour flash sale exclusive to WhatsApp Status viewers with a unique promo code to drive urgency.\n3. Partner with 5-10 local micro-influencers for authentic UGC content that builds trust and social proof.";
     }
 
     await prisma.generatedFile.create({
-      data: {
-        campaignId,
-        url: '',
-        type: 'caption',
-        content: `STRATEGY:${suggestions}`,
-      }
+      data: { campaignId, url: '', type: 'caption', content: `STRATEGY:${suggestions}` }
     });
 
-    // Update final status
+    // Done
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'completed' },
     });
     
-    console.log(`✅ Campaign ${campaignId} generation completed successfully (${language}).`);
+    console.log(`Campaign ${campaignId} generation completed (${language}).`);
   } catch (error) {
-    console.error(`❌ Error generating assets for campaign ${campaignId}:`, error);
+    console.error(`Error generating assets for campaign ${campaignId}:`, error);
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'failed' },

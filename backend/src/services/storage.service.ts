@@ -22,7 +22,7 @@ const authorizeB2 = async () => {
       isB2Authorized = true;
       console.log('[B2] Authorized successfully. Download URL:', b2DownloadUrl);
     } else {
-      console.warn('[B2] Credentials missing. Storage service running in mock mode.');
+      console.warn('[B2] Credentials missing. Storage service will pass-through source URLs directly.');
     }
   } catch (error) {
     console.error('[B2] Authorization failed:', error);
@@ -36,6 +36,7 @@ export const uploadFile = async (filePath: string, fileName: string): Promise<st
   await authorizeB2();
   
   if (!isB2Authorized) {
+    // Return mock only as a last resort - callers should handle this
     return `https://mock-storage.com/${fileName}`;
   }
 
@@ -62,13 +63,14 @@ export const uploadFile = async (filePath: string, fileName: string): Promise<st
 
 /**
  * Upload a Buffer directly to Backblaze B2 (for generated images/videos)
+ * Returns the B2 URL on success, or throws on failure so callers can use fallbacks.
  */
 export const uploadBuffer = async (buffer: Buffer, fileName: string, mimeType: string = 'b2/x-auto'): Promise<string> => {
   await authorizeB2();
   
   if (!isB2Authorized) {
-    console.warn('[B2] Not authorized, returning mock URL');
-    return `https://mock-storage.com/${fileName}`;
+    console.warn('[B2] Not authorized - cannot upload buffer, throwing for fallback');
+    throw new Error('B2 not authorized');
   }
 
   try {
@@ -93,27 +95,38 @@ export const uploadBuffer = async (buffer: Buffer, fileName: string, mimeType: s
 };
 
 /**
- * Download a file from a URL and upload it to Backblaze B2
+ * Download a file from a URL and upload it to Backblaze B2.
+ * If B2 is not available, returns the original source URL so content still works.
  */
 export const uploadFromUrl = async (sourceUrl: string, fileName: string): Promise<string> => {
   try {
     console.log(`[B2] Downloading from URL: ${sourceUrl}`);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
+    // Validate the source URL is reachable first
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(sourceUrl, { signal: controller.signal });
     clearTimeout(timeout);
 
     if (!response.ok) {
-      throw new Error(`Failed to download: ${response.status} ${response.statusText}`);
+      throw new Error(`Source URL returned ${response.status}: ${response.statusText}`);
     }
+
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
+
+    // If B2 is not authorized, return the source URL directly (it's a real working URL)
+    if (!isB2Authorized) {
+      console.log('[B2] Not authorized, returning source URL directly');
+      return sourceUrl;
+    }
     
     return await uploadBuffer(buffer, fileName, contentType);
   } catch (error) {
     console.error('[B2] Upload from URL failed:', error);
-    throw error;
+    // Return the source URL so the content is still accessible
+    console.log('[B2] Falling back to source URL');
+    return sourceUrl;
   }
 };

@@ -11,7 +11,9 @@ import { Video, ResizeMode } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Linking } from 'react-native';
+
+const PLACEHOLDER_IMAGE = 'https://images.unsplash.com/photo-1542442828-287217bfb87f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80';
+const PLACEHOLDER_VIDEO = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Result'>;
 
@@ -32,6 +34,8 @@ export default function ResultScreen({ route, navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [shareModalVisible, setShareModalVisible] = useState(false);
   const [sharingInProgress, setSharingInProgress] = useState(false);
+  const [posterFailed, setPosterFailed] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
   const isSmallScreen = height < 700;
   const isTablet = width >= 768;
 
@@ -288,6 +292,9 @@ export default function ResultScreen({ route, navigation }: Props) {
     ? campaignData.strategy.split('\n').filter((s: string) => s.trim().length > 0)
     : [];
 
+  const finalVideoUrl = campaignData.video || PLACEHOLDER_VIDEO;
+  const finalPosterUrl = campaignData.poster || PLACEHOLDER_IMAGE;
+
   const horizontalPad = isTablet ? 48 : 24;
 
   return (
@@ -307,29 +314,41 @@ export default function ResultScreen({ route, navigation }: Props) {
         showsVerticalScrollIndicator={false}
       >
         {/* Video Section */}
-        {campaignData.video ? (
+        {finalVideoUrl && !videoFailed ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Promotional Video</Text>
             <View style={[styles.videoContainer, { height: isTablet ? 340 : 220 }]}>
               <Video
-                source={{ uri: campaignData.video }}
+                source={{ uri: finalVideoUrl }}
                 style={styles.video}
                 useNativeControls
                 resizeMode={ResizeMode.CONTAIN}
                 isLooping
+                onError={() => {
+                  console.log('Video failed to load, trying placeholder');
+                  if (finalVideoUrl !== PLACEHOLDER_VIDEO) {
+                    setVideoFailed(true);
+                  }
+                }}
               />
             </View>
           </View>
         ) : null}
 
         {/* Poster Section */}
-        {campaignData.poster ? (
+        {finalPosterUrl && !posterFailed ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>AI Generated Poster</Text>
             <Image
-              source={{ uri: campaignData.poster }}
+              source={{ uri: finalPosterUrl }}
               style={[styles.posterImage, { height: isTablet ? 450 : 300 }]}
               resizeMode="contain"
+              onError={() => {
+                console.log('Image failed to load, trying placeholder');
+                if (finalPosterUrl !== PLACEHOLDER_IMAGE) {
+                  setPosterFailed(true);
+                }
+              }}
             />
           </View>
         ) : null}

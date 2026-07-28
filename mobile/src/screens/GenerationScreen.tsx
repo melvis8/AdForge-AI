@@ -8,12 +8,12 @@ import { getCampaign } from '../services/api.service';
 type Props = NativeStackScreenProps<RootStackParamList, 'Generation'>;
 
 const STEPS = [
-  { text: 'Understanding your product prompt...', icon: '1' },
-  { text: 'Creating AI marketing strategy...', icon: '2' },
-  { text: 'Generating Gemini AI poster image...', icon: '3' },
-  { text: 'Uploading assets to Backblaze Cloud...', icon: '4' },
-  { text: 'Rendering JSON2Video promo clip...', icon: '5' },
-  { text: 'Finalizing your campaign...', icon: '6' },
+  'Analyzing your prompt...',
+  'Crafting your marketing strategy...',
+  'Generating your campaign image...',
+  'Creating your promotional content...',
+  'Building your campaign video...',
+  'Finalizing your campaign...',
 ];
 
 export default function GenerationScreen({ navigation, route }: Props) {
@@ -63,8 +63,8 @@ export default function GenerationScreen({ navigation, route }: Props) {
           clearInterval(pollInterval);
           clearInterval(stepInterval);
           Alert.alert(
-            'Generation Failed',
-            'An error occurred while generating campaign assets with AI. Please try again.',
+            'Oops',
+            'Something went wrong while preparing your campaign. Please try again.',
             [{ text: 'OK', onPress: () => navigation.replace('CampaignCreation') }]
           );
         }
@@ -118,20 +118,12 @@ export default function GenerationScreen({ navigation, route }: Props) {
           transform: [{ rotate: spin }]
         }]} />
 
-        <Animated.Text style={[styles.stepIcon, {
-          opacity: fadeAnim,
-          transform: [{ scale: scaleAnim }],
-          fontSize: isTablet ? 64 : 48,
-        }]}>
-          {STEPS[currentStep].icon}
-        </Animated.Text>
-
         <Animated.Text style={[styles.stepText, {
           opacity: fadeAnim,
           fontSize: isTablet ? 24 : 20,
           paddingHorizontal: 20,
         }]}>
-          {STEPS[currentStep].text}
+          {STEPS[currentStep]}
         </Animated.Text>
         
         <View style={styles.progressContainer}>
@@ -178,11 +170,6 @@ const styles = StyleSheet.create({
     borderTopColor: 'transparent',
     borderRightColor: '#6366f1',
     marginBottom: 40,
-  },
-  stepIcon: {
-    fontWeight: '800',
-    color: '#38bdf8',
-    marginBottom: 16,
   },
   stepText: {
     color: '#ffffff',

@@ -1,5 +1,16 @@
-// Deployed Render service API URL
-const API_URL = 'https://adforge-api-hday.onrender.com/api';
+import { Platform } from 'react-native';
+
+// Switch between local dev and production:
+// - Local dev: use your computer's IP address (run `hostname -I` to find it)
+// - Production: use the Render deployed URL
+// Change this single variable to switch environments:
+const USE_LOCAL = false;
+
+const LOCAL_URL = 'http://192.168.1.183:3000/api'; // Your local IP
+const PRODUCTION_URL = 'https://adforge-api-hday.onrender.com/api';
+
+const API_URL = USE_LOCAL ? LOCAL_URL : PRODUCTION_URL;
+console.log(`[API] Using: ${API_URL}`);
 
 export const checkBackendHealth = async () => {
   try {
