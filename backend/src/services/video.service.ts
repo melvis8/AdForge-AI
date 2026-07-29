@@ -2,6 +2,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import ffmpegPath from 'ffmpeg-static';
 
 interface VideoResult {
   url: string;
@@ -9,21 +10,9 @@ interface VideoResult {
 }
 
 /**
- * Check if ffmpeg is available on the system
- */
-const isFfmpegAvailable = (): boolean => {
-  try {
-    execSync('ffmpeg -version', { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
- * Creates a promotional video from the poster image using ffmpeg.
+ * Creates a promotional video from the poster image using ffmpeg-static.
  * Produces a 10-second Ken Burns effect video with the campaign title overlay.
- * This is free and works without any API key.
+ * Uses the ffmpeg binary bundled via npm (no system install needed).
  */
 export const createPromotionalVideo = async (
   title: string,
@@ -35,10 +24,11 @@ export const createPromotionalVideo = async (
     throw new Error('No poster URL provided for video generation');
   }
 
-  // Check if ffmpeg is available
-  if (!isFfmpegAvailable()) {
-    throw new Error('ffmpeg not installed - video generation not available');
+  if (!ffmpegPath) {
+    throw new Error('ffmpeg-static binary not found');
   }
+
+  console.log(`[Video] Using ffmpeg at: ${ffmpegPath}`);
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adforge-video-'));
   const inputImage = path.join(tmpDir, 'input.jpg');
@@ -59,16 +49,18 @@ export const createPromotionalVideo = async (
     const totalFrames = duration * fps;
 
     // Escape special characters in the title for ffmpeg drawtext
-    const escapedTitle = title.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/%/g, "%%");
-    const escapedDesc = description.substring(0, 80).replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/%/g, "%%");
+    const escapeText = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:').replace(/%/g, '%%').replace(/\n/g, ' ');
+    const escapedTitle = escapeText(title.substring(0, 50));
+    const escapedDesc = escapeText(description.substring(0, 60));
 
     const ffmpegCmd = [
-      'ffmpeg -y',
+      `"${ffmpegPath}" -y`,
       `-loop 1 -i "${inputImage}"`,
-      '-vf', `"scale=1920:1920:force_original_aspect_ratio=increase,crop=1920:1920,` +
-        `zoompan=z='min(zoom+0.001,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1080x1080:fps=${fps},` +
-        `drawtext=text='${escapedTitle}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=h-120:shadowcolor=black@0.8:shadowx=2:shadowy=2,` +
-        `drawtext=text='${escapedDesc}':fontcolor=white@0.8:fontsize=28:x=(w-text_w)/2:y=h-60:shadowcolor=black@0.6:shadowx=1:shadowy=1"`,
+      '-vf',
+      `scale=1920:1920:force_original_aspect_ratio=increase,crop=1920:1920,` +
+      `zoompan=z='min(zoom+0.001,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1080x1080:fps=${fps},` +
+      `drawtext=text='${escapedTitle}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=h-120:shadowcolor=black@0.8:shadowx=2:shadowy=2,` +
+      `drawtext=text='${escapedDesc}':fontcolor=white@0.8:fontsize=28:x=(w-text_w)/2:y=h-60:shadowcolor=black@0.6:shadowx=1:shadowy=1`,
       '-c:v libx264',
       '-t', String(duration),
       '-pix_fmt yuv420p',
@@ -77,7 +69,7 @@ export const createPromotionalVideo = async (
       `"${outputVideo}"`,
     ].join(' ');
 
-    console.log('[Video] Generating video with ffmpeg...');
+    console.log('[Video] Generating video with ffmpeg-static...');
     execSync(ffmpegCmd, {
       timeout: 120000,
       stdio: 'pipe',
@@ -92,7 +84,7 @@ export const createPromotionalVideo = async (
       throw new Error('Video file too small, likely corrupt');
     }
 
-    return { url: outputVideo, projectId: 'ffmpeg-local' };
+    return { url: outputVideo, projectId: 'ffmpeg-static' };
 
   } catch (e: any) {
     console.error('[Video] Generation failed:', e?.message || e);
