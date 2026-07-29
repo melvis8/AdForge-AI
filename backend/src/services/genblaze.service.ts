@@ -9,11 +9,64 @@ dotenv.config();
 const prisma = new PrismaClient();
 const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
+const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
+
 const LANG_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
   zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ar: 'Arabic', ha: 'Hausa',
   yo: 'Yoruba', sw: 'Swahili', it: 'Italian', nl: 'Dutch', ru: 'Russian',
   hi: 'Hindi', tr: 'Turkish', vi: 'Vietnamese', th: 'Thai', id: 'Indonesian',
+};
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const geminiGenerate = async (prompt: string, model: string = GEMINI_MODEL, retries = 3): Promise<string> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await gemini.models.generateContent({ model, contents: prompt });
+      return response.text?.trim() || '';
+    } catch (e: any) {
+      const msg = e?.message || '';
+      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+        const delay = attempt * 15000;
+        console.log(`[Gemini] Rate limited (attempt ${attempt}/${retries}), waiting ${delay / 1000}s...`);
+        await sleep(delay);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error('Gemini rate limit exceeded after retries');
+};
+
+const geminiGenerateImage = async (prompt: string, retries = 3): Promise<Buffer | null> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await gemini.models.generateContent({
+        model: GEMINI_IMAGE_MODEL,
+        contents: prompt,
+        config: { responseModalities: ['TEXT', 'IMAGE'] },
+      });
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      for (const part of parts) {
+        if (part.inlineData?.data) {
+          return Buffer.from(part.inlineData.data, 'base64');
+        }
+      }
+      return null;
+    } catch (e: any) {
+      const msg = e?.message || '';
+      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+        const delay = attempt * 15000;
+        console.log(`[Gemini] Image rate limited (attempt ${attempt}/${retries}), waiting ${delay / 1000}s...`);
+        await sleep(delay);
+        continue;
+      }
+      throw e;
+    }
+  }
+  return null;
 };
 
 const detectLanguage = async (text: string): Promise<string> => {
@@ -39,11 +92,7 @@ const detectLanguage = async (text: string): Promise<string> => {
 
   // Fallback to Gemini API
   try {
-    const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: `What language is this text written in? Reply with ONLY the 2-letter ISO 639-1 code. Examples: English=en, French=fr, Spanish=es, Arabic=ar, Hausa=ha, Yoruba=yo, Swahili=sw\n\nText: "${text.substring(0, 300)}"`,
-    });
-    const rawResponse = response.text?.trim() || '';
+    const rawResponse = await geminiGenerate(`What language is this text written in? Reply with ONLY the 2-letter ISO 639-1 code. Examples: English=en, French=fr, Spanish=es, Arabic=ar, Hausa=ha, Yoruba=yo, Swahili=sw\n\nText: "${text.substring(0, 300)}"`);
     console.log(`[Genblaze] Gemini raw response: "${rawResponse}"`);
     const code = rawResponse.toLowerCase().replace(/[^a-z]/g, '').substring(0, 2);
     if (code && code.length === 2) {
@@ -66,9 +115,7 @@ const detectLanguage = async (text: string): Promise<string> => {
 const generateDetailedDescription = async (userPrompt: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language.
+    const result = await geminiGenerate(`CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language.
 
 The user wants to create a marketing campaign. Their prompt is: "${userPrompt}"
 
@@ -80,9 +127,7 @@ Expand this into a detailed campaign brief (200-400 words) that includes:
 5. Suggested promotional angle or offer
 6. The vibe/mood of the brand
 
-Write it as a natural paragraph in ${langName}. Be creative but stay true to what the user described.`,
-    });
-    const result = response.text?.trim() || '';
+Write it as a natural paragraph in ${langName}. Be creative but stay true to what the user described.`);
     if (result.length > 50) {
       console.log(`[Genblaze] Expanded description (${result.split(' ').length} words, ${language})`);
       return result;
@@ -96,17 +141,14 @@ Write it as a natural paragraph in ${langName}. Be creative but stay true to wha
 const generateCampaignTitle = async (description: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. You are a world-class copywriter. Output ONLY the title.
+    const result = await geminiGenerate(`CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. You are a world-class copywriter. Output ONLY the title.
 
 Create ONE powerful, catchy campaign title (max 6 words) for this marketing campaign:
 
 "${description.substring(0, 500)}"
 
-Rules: Write in ${langName}. No quotes, no period, create urgency, make it memorable.`,
-    });
-    return response.text?.trim() || description.substring(0, 40);
+Rules: Write in ${langName}. No quotes, no period, create urgency, make it memorable.`);
+    return result || description.substring(0, 40);
   } catch (e) {
     console.error('[Gemini] Title failed:', e);
     return description.substring(0, 40);
@@ -123,9 +165,8 @@ Rules: Write in ${langName}. No quotes, no period, create urgency, make it memor
 const generatePosterImage = async (title: string, description: string, campaignId: string, language: string): Promise<string> => {
   console.log(`[Genblaze] Generating image with Gemini...`);
   try {
-    const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: `Generate a professional marketing poster image for this campaign:
+    const imageBuffer = await geminiGenerateImage(
+      `Generate a professional marketing poster image for this campaign:
 
 TITLE: "${title}"
 DESCRIPTION: ${description.substring(0, 600)}
@@ -135,57 +176,35 @@ Create a visually striking, high-quality marketing poster. The image should be:
 - Modern design with vibrant colors
 - Appropriate for social media (square format)
 - Visually compelling that makes people want to stop scrolling
-- No text or words in the image - just the visual scene`,
-      config: {
-        responseModalities: ['TEXT', 'IMAGE'],
-      },
-    });
+- No text or words in the image - just the visual scene`
+    );
 
-    // Extract image from response parts
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    for (const part of parts) {
-      if (part.inlineData?.data) {
-        const imageBuffer = Buffer.from(part.inlineData.data, 'base64');
-        const mimeType = part.inlineData.mimeType || 'image/jpeg';
-        const ext = mimeType.includes('png') ? 'png' : 'jpg';
-        console.log(`[Genblaze] Gemini image generated (${imageBuffer.length} bytes)`);
-
-        const b2Url = await uploadBuffer(
-          imageBuffer,
-          `campaigns/${campaignId}/poster_${Date.now()}.${ext}`,
-          mimeType
-        );
-        console.log(`[Genblaze] Saved to B2: ${b2Url}`);
-        return b2Url;
-      }
+    if (imageBuffer) {
+      console.log(`[Genblaze] Gemini image generated (${imageBuffer.length} bytes)`);
+      const b2Url = await uploadBuffer(
+        imageBuffer,
+        `campaigns/${campaignId}/poster_${Date.now()}.jpg`,
+        'image/jpeg'
+      );
+      console.log(`[Genblaze] Saved to B2: ${b2Url}`);
+      return b2Url;
     }
 
-    // If no image in response, try with a simpler prompt
-    console.log(`[Genblaze] No image in response, retrying with simpler prompt...`);
-    const retryResponse = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: `Generate a beautiful, colorful marketing poster image for: ${title}. Make it vibrant and professional.`,
-      config: {
-        responseModalities: ['TEXT', 'IMAGE'],
-      },
-    });
+    // Retry with simpler prompt
+    console.log(`[Genblaze] No image returned, retrying with simpler prompt...`);
+    const retryBuffer = await geminiGenerateImage(
+      `Generate a beautiful, colorful marketing poster image for: ${title}. Make it vibrant and professional.`
+    );
 
-    const retryParts = retryResponse.candidates?.[0]?.content?.parts || [];
-    for (const part of retryParts) {
-      if (part.inlineData?.data) {
-        const imageBuffer = Buffer.from(part.inlineData.data, 'base64');
-        const mimeType = part.inlineData.mimeType || 'image/jpeg';
-        const ext = mimeType.includes('png') ? 'png' : 'jpg';
-        console.log(`[Genblaze] Gemini retry image generated (${imageBuffer.length} bytes)`);
-
-        const b2Url = await uploadBuffer(
-          imageBuffer,
-          `campaigns/${campaignId}/poster_${Date.now()}.${ext}`,
-          mimeType
-        );
-        console.log(`[Genblaze] Saved to B2: ${b2Url}`);
-        return b2Url;
-      }
+    if (retryBuffer) {
+      console.log(`[Genblaze] Gemini retry image generated (${retryBuffer.length} bytes)`);
+      const b2Url = await uploadBuffer(
+        retryBuffer,
+        `campaigns/${campaignId}/poster_${Date.now()}.jpg`,
+        'image/jpeg'
+      );
+      console.log(`[Genblaze] Saved to B2: ${b2Url}`);
+      return b2Url;
     }
 
     throw new Error('Gemini did not return an image');
@@ -202,9 +221,7 @@ Create a visually striking, high-quality marketing poster. The image should be:
 const generateCaption = async (title: string, description: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write a single word in any other language. This is a strict requirement.
+    const caption = await geminiGenerate(`CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write a single word in any other language. This is a strict requirement.
 
 You are the world's #1 social media copywriter. You write captions for brands like Nike, Apple, and Coca-Cola that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy.
 
@@ -234,9 +251,7 @@ RULES:
 - Include specific numbers, prices, or percentages
 - Make someone FEEL something and WANT to take action
 - No generic filler - every sentence must be about THIS specific product
-- Do NOT switch to English or any other language`,
-    });
-    const caption = response.text?.trim() || '';
+- Do NOT switch to English or any other language`);
     console.log(`[Genblaze] Caption: ${caption.split(' ').length} words (${language})`);
     return caption;
   } catch (e) {
@@ -248,18 +263,14 @@ RULES:
 const generateStrategy = async (title: string, description: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write in any other language. You are a world-class marketing strategist with 15 years of experience.
+    const result = await geminiGenerate(`CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write in any other language. You are a world-class marketing strategist with 15 years of experience.
 
 Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips entirely in ${langName} for THIS exact campaign:
 
 TITLE: "${title}"
 DESCRIPTION: ${description.substring(0, 500)}
 
-Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3). Write EVERYTHING in ${langName}.`,
-    });
-    const result = response.text?.trim() || '';
+Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3). Write EVERYTHING in ${langName}.`);
     console.log(`[Genblaze] Strategy: ${result.split(' ').length} words (${language})`);
     return result;
   } catch (e) {
@@ -327,11 +338,8 @@ export const generateCampaignAssets = async (campaignId: string) => {
     if (!caption || caption.length < 50) {
       // Last resort: generate a basic caption in the correct language
       try {
-        const fallbackResponse = await gemini.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: `Write in ${LANG_NAMES[language] || 'English'}. Write a 100-word social media caption about this product. Include emojis and hashtags.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`,
-        });
-        caption = fallbackResponse.text?.trim() || `${title} - ${description.substring(0, 100)}`;
+        caption = await geminiGenerate(`Write in ${LANG_NAMES[language] || 'English'}. Write a 100-word social media caption about this product. Include emojis and hashtags.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`);
+        if (!caption) caption = `${title} - ${description.substring(0, 100)}`;
       } catch {
         caption = `${title} - ${description.substring(0, 100)}`;
       }
@@ -353,11 +361,7 @@ export const generateCampaignAssets = async (campaignId: string) => {
     if (!suggestions || suggestions.length < 20) {
       // Last resort: basic strategy in correct language
       try {
-        const fallbackResponse = await gemini.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: `Write 3 marketing tips in ${LANG_NAMES[language] || 'English'} for this product. Number them 1-3.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`,
-        });
-        suggestions = fallbackResponse.text?.trim() || '';
+        suggestions = await geminiGenerate(`Write 3 marketing tips in ${LANG_NAMES[language] || 'English'} for this product. Number them 1-3.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`);
       } catch {
         suggestions = '';
       }
