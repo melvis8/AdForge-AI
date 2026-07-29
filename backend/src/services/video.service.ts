@@ -9,6 +9,18 @@ interface VideoResult {
 }
 
 /**
+ * Check if ffmpeg is available on the system
+ */
+const isFfmpegAvailable = (): boolean => {
+  try {
+    execSync('ffmpeg -version', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Creates a promotional video from the poster image using ffmpeg.
  * Produces a 10-second Ken Burns effect video with the campaign title overlay.
  * This is free and works without any API key.
@@ -21,6 +33,11 @@ export const createPromotionalVideo = async (
 ): Promise<VideoResult> => {
   if (!posterUrl) {
     throw new Error('No poster URL provided for video generation');
+  }
+
+  // Check if ffmpeg is available
+  if (!isFfmpegAvailable()) {
+    throw new Error('ffmpeg not installed - video generation not available');
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adforge-video-'));
@@ -37,16 +54,14 @@ export const createPromotionalVideo = async (
     console.log(`[Video] Poster downloaded (${buffer.length} bytes)`);
 
     // Create a Ken Burns effect video: slow zoom + pan with title overlay
-    // Duration: 10 seconds, 30fps, 1080x1080 (square for social media)
     const duration = 10;
     const fps = 30;
     const totalFrames = duration * fps;
 
     // Escape special characters in the title for ffmpeg drawtext
-    const escapedTitle = title.replace(/'/g, "\\'").replace(/:/g, "\\:");
-    const escapedDesc = description.substring(0, 80).replace(/'/g, "\\'").replace(/:/g, "\\:");
+    const escapedTitle = title.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/%/g, "%%");
+    const escapedDesc = description.substring(0, 80).replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/%/g, "%%");
 
-    // Ken Burns: slow zoom in from 100% to 120% with slight pan
     const ffmpegCmd = [
       'ffmpeg -y',
       `-loop 1 -i "${inputImage}"`,
