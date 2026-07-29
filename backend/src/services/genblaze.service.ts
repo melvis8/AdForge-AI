@@ -25,18 +25,45 @@ const LANG_NAMES: Record<string, string> = {
 };
 
 const detectLanguage = async (text: string): Promise<string> => {
+  // First, try simple heuristic detection
+  const langHints: Record<string, RegExp> = {
+    fr: /\b(le|la|les|des|une|est|dans|pour|avec|sur|pas|que|qui|cette|nous|vous|sont|mais|tout|mon|ton|son|fait|peut|va|je|tu|il|elle|nous|vous|ils|elles|bonjour|merci|s'il vous plaît|produit|marque|lancement|offre)\b/i,
+    es: /\b(el|la|los|las|un|una|es|en|por|con|para|no|que|como|pero|más|este|esta|muy|bueno|día|hola|gracias|producto|marca|lanzamiento|oferta)\b/i,
+    de: /\b(der|die|das|ein|eine|ist|in|mit|auf|nicht|und|ich|du|er|sie|wir|ihr|sind|aber|kann|gut|morgen|danke|produkt|marke|angebot)\b/i,
+    pt: /\b(o|a|os|as|um|uma|é|em|com|para|não|que|como|mas|mais|este|esta|muito|bom|dia|olá|obrigado|produto|marca|lançamento|oferta)\b/i,
+    ar: /[؟،]/u,
+    zh: /[\u4e00-\u9fff]/,
+    ja: /[\u3040-\u309f\u30a0-\u30ff]/,
+    ko: /[\uac00-\ud7af]/,
+    ha: /\b(na|ne|da|wa|ba|ta|ka|ga|ya|am|ai|ni|shi|fi|ko|mi|sunan|kuma| Product| brand| offer)\b/i,
+  };
+
+  for (const [lang, regex] of Object.entries(langHints)) {
+    if (regex.test(text)) {
+      console.log(`[Genblaze] Language detected by heuristic: ${lang}`);
+      return lang;
+    }
+  }
+
+  // Fallback to Gemini API
   try {
     const response = await gemini.models.generateContent({
       model: 'gemini-2.0-flash',
-      contents: `Detect the language of this text. Reply ONLY with the 2-letter ISO code (en, fr, es, de, pt, zh, ja, ko, ar, ha, yo, sw, it, nl, ru, hi, tr, vi, th, id). No explanation, no punctuation, just the code.\n\n"${text}"`,
+      contents: `What language is this text written in? Reply with ONLY the 2-letter ISO 639-1 code. Examples: English=en, French=fr, Spanish=es, Arabic=ar, Hausa=ha, Yoruba=yo, Swahili=sw\n\nText: "${text.substring(0, 300)}"`,
     });
-    const code = response.text?.trim().toLowerCase().replace(/[^a-z]/g, '').substring(0, 2) || 'en';
-    console.log(`[Genblaze] Detected language: ${code}`);
-    return code;
+    const rawResponse = response.text?.trim() || '';
+    console.log(`[Genblaze] Gemini raw response: "${rawResponse}"`);
+    const code = rawResponse.toLowerCase().replace(/[^a-z]/g, '').substring(0, 2);
+    if (code && code.length === 2) {
+      console.log(`[Genblaze] Language detected by Gemini: ${code}`);
+      return code;
+    }
   } catch (e) {
-    console.error('[Genblaze] Language detection failed:', e);
-    return 'en';
+    console.error('[Genblaze] Gemini language detection failed:', e);
   }
+
+  console.log('[Genblaze] Defaulting to English');
+  return 'en';
 };
 
 /**
@@ -52,13 +79,13 @@ const generateDetailedDescription = async (userPrompt: string, language: string)
       messages: [
         {
           role: 'system',
-          content: `You are a marketing expert who expands short prompts into detailed campaign briefs. Write in ${langName}. Be specific and detailed.`
+          content: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. This is a strict requirement.`
         },
         {
           role: 'user',
           content: `The user wants to create a marketing campaign. Their prompt is: "${userPrompt}"
 
-Expand this into a detailed campaign brief (150-300 words) that includes:
+Expand this into a detailed campaign brief (200-400 words) that includes:
 1. What the product/service is (be specific)
 2. Key features and benefits
 3. Target audience
@@ -66,15 +93,15 @@ Expand this into a detailed campaign brief (150-300 words) that includes:
 5. Suggested promotional angle or offer
 6. The vibe/mood of the brand
 
-Write it as a natural paragraph, not bullet points. Be creative but stay true to what the user described.`
+Write it as a natural paragraph in ${langName}. Be creative but stay true to what the user described.`
         }
       ],
-      max_tokens: 600,
+      max_tokens: 800,
       temperature: 0.8,
     });
     const result = completion.choices[0]?.message?.content?.trim();
     if (result && result.length > 50) {
-      console.log(`[Genblaze] Expanded description (${result.split(' ').length} words)`);
+      console.log(`[Genblaze] Expanded description (${result.split(' ').length} words, ${language})`);
       return result;
     }
   } catch (e) {
@@ -89,8 +116,8 @@ const generateCampaignTitle = async (description: string, language: string): Pro
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: `You are a world-class copywriter. Write in ${langName}. Output ONLY the title.` },
-        { role: 'user', content: `Create ONE powerful, catchy campaign title (max 6 words) for this marketing campaign:\n\n"${description.substring(0, 500)}"\n\nRules: No quotes, no period, create urgency, make it memorable.` }
+        { role: 'system', content: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. You are a world-class copywriter. Output ONLY the title.` },
+        { role: 'user', content: `Create ONE powerful, catchy campaign title (max 6 words) for this marketing campaign:\n\n"${description.substring(0, 500)}"\n\nRules: Write in ${langName}. No quotes, no period, create urgency, make it memorable.` }
       ],
       max_tokens: 30,
       temperature: 0.9,
@@ -231,16 +258,16 @@ const generateCaption = async (title: string, description: string, language: str
       messages: [
         {
           role: 'system',
-          content: `You are the world's #1 social media copywriter. You write captions for brands like Nike, Apple, and Coca-Cola that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy. Write in ${langName}.`
+          content: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write a single word in any other language. This is a strict requirement.\n\nYou are the world's #1 social media copywriter. You write captions for brands like Nike, Apple, and Coca-Cola that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy.`
         },
         {
           role: 'user',
-          content: `Write a POWERFUL, LONG-FORM social media caption (500-800 words) for this campaign:
+          content: `Write a POWERFUL, LONG-FORM social media caption (500-800 words) entirely in ${langName} for this campaign:
 
 CAMPAIGN TITLE: "${title}"
 PRODUCT/SERVICE DETAILS: ${description}
 
-Write the caption with this structure:
+Write the caption with this structure (ALL IN ${langName}):
 
 1. HOOK - First line that stops the scroll (question, bold statement, or surprising fact)
 2. STORY - 2-3 paragraphs about the product/service, why it exists, who it's for
@@ -253,20 +280,22 @@ Write the caption with this structure:
 
 RULES:
 - Write MINIMUM 500 words
+- EVERYTHING must be in ${langName}
 - Reference SPECIFIC details from the description
 - Use emojis strategically throughout
 - Feel personal and authentic
 - Use short paragraphs for readability
 - Include specific numbers, prices, or percentages
 - Make someone FEEL something and WANT to take action
-- No generic filler - every sentence must be about THIS specific product`
+- No generic filler - every sentence must be about THIS specific product
+- Do NOT switch to English or any other language`
         }
       ],
       max_tokens: 2000,
       temperature: 0.85,
     });
     const caption = completion.choices[0]?.message?.content?.trim() || '';
-    console.log(`[Genblaze] Caption: ${caption.split(' ').length} words`);
+    console.log(`[Genblaze] Caption: ${caption.split(' ').length} words (${language})`);
     return caption;
   } catch (e) {
     console.error('[OpenAI] Caption failed:', e);
@@ -280,21 +309,23 @@ const generateStrategy = async (title: string, description: string, language: st
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: `World-class marketing strategist. Write in ${langName}.` },
+        { role: 'system', content: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write in any other language. You are a world-class marketing strategist with 15 years of experience.` },
         {
           role: 'user',
-          content: `Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips for THIS exact campaign:
+          content: `Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips entirely in ${langName} for THIS exact campaign:
 
 TITLE: "${title}"
 DESCRIPTION: ${description.substring(0, 500)}
 
-Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3).`
+Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3). Write EVERYTHING in ${langName}.`
         }
       ],
-      max_tokens: 500,
+      max_tokens: 600,
       temperature: 0.8,
     });
-    return completion.choices[0]?.message?.content?.trim() || '';
+    const result = completion.choices[0]?.message?.content?.trim() || '';
+    console.log(`[Genblaze] Strategy: ${result.split(' ').length} words (${language})`);
+    return result;
   } catch (e) {
     console.error('[OpenAI] Strategy failed:', e);
     return '';
@@ -350,8 +381,23 @@ export const generateCampaignAssets = async (campaignId: string) => {
 
     // Handle caption
     let caption = captionResult.status === 'fulfilled' ? captionResult.value : '';
-    if (!caption) {
-      caption = `Discover ${title} - ${description}`;
+    if (!caption || caption.length < 50) {
+      // Retry caption generation if it was too short
+      console.log('[Genblaze] Caption too short, retrying...');
+      try {
+        caption = await generateCaption(title, description, language);
+      } catch {}
+    }
+    if (!caption || caption.length < 50) {
+      // Last resort: generate a basic caption in the correct language
+      caption = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: `Write in ${LANG_NAMES[language] || 'English'}. Write a 100-word social media caption about this product. Include emojis and hashtags.` },
+          { role: 'user', content: `Product: ${title}\nDetails: ${description.substring(0, 300)}` }
+        ],
+        max_tokens: 300,
+      }).then(r => r.choices[0]?.message?.content?.trim() || `${title} - ${description.substring(0, 100)}`);
     }
     await prisma.generatedFile.create({
       data: { campaignId, url: '', type: 'caption', content: caption }
@@ -360,8 +406,23 @@ export const generateCampaignAssets = async (campaignId: string) => {
 
     // Step 6: Generate strategy
     let suggestions = await generateStrategy(title, description, language);
-    if (!suggestions) {
-      suggestions = "1. Run targeted social media ads on Instagram and TikTok for maximum reach.\n2. Partner with local micro-influencers for authentic content.\n3. Create limited-time offer to drive urgency.";
+    if (!suggestions || suggestions.length < 20) {
+      // Retry strategy
+      console.log('[Genblaze] Strategy too short, retrying...');
+      try {
+        suggestions = await generateStrategy(title, description, language);
+      } catch {}
+    }
+    if (!suggestions || suggestions.length < 20) {
+      // Last resort: basic strategy in correct language
+      suggestions = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: `Write 3 marketing tips in ${LANG_NAMES[language] || 'English'} for this product. Number them 1-3.` },
+          { role: 'user', content: `Product: ${title}\nDetails: ${description.substring(0, 300)}` }
+        ],
+        max_tokens: 400,
+      }).then(r => r.choices[0]?.message?.content?.trim() || '');
     }
     await prisma.generatedFile.create({
       data: { campaignId, url: '', type: 'caption', content: `STRATEGY:${suggestions}` }
@@ -395,15 +456,28 @@ const generateVideoInBackground = async (
   posterUrl: string,
   language: string
 ) => {
+  const fs = require('fs');
   console.log(`[Genblaze] Starting background video for ${campaignId}...`);
   try {
     const videoResult = await createPromotionalVideo(title, description, posterUrl, language);
     if (videoResult?.url) {
-      const videoUrl = await uploadFromUrl(videoResult.url, `campaigns/${campaignId}/video_${Date.now()}.mp4`);
-      await prisma.generatedFile.create({
-        data: { campaignId, url: videoUrl, type: 'video' }
-      });
-      console.log(`[Genblaze] Video completed: ${videoUrl.substring(0, 80)}...`);
+      // If it's a local file path, read it and upload to B2
+      if (videoResult.url.startsWith('/')) {
+        const buffer = fs.readFileSync(videoResult.url);
+        const videoUrl = await uploadBuffer(buffer, `campaigns/${campaignId}/video_${Date.now()}.mp4`, 'video/mp4');
+        await prisma.generatedFile.create({
+          data: { campaignId, url: videoUrl, type: 'video' }
+        });
+        console.log(`[Genblaze] Video uploaded to B2: ${videoUrl.substring(0, 80)}...`);
+        // Clean up temp file
+        try { fs.unlinkSync(videoResult.url); } catch {}
+      } else {
+        const videoUrl = await uploadFromUrl(videoResult.url, `campaigns/${campaignId}/video_${Date.now()}.mp4`);
+        await prisma.generatedFile.create({
+          data: { campaignId, url: videoUrl, type: 'video' }
+        });
+        console.log(`[Genblaze] Video completed: ${videoUrl.substring(0, 80)}...`);
+      }
     }
   } catch (e: any) {
     console.error('[Genblaze] Video failed:', e?.message || e);

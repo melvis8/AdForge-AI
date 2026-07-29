@@ -1,21 +1,17 @@
-import { fal } from '@fal-ai/client';
-import dotenv from 'dotenv';
-dotenv.config();
-
-const FAL_KEY = process.env.FAL_API_KEY || '';
+import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 interface VideoResult {
   url: string;
   projectId: string;
 }
 
-if (FAL_KEY) {
-  fal.config({ credentials: FAL_KEY });
-}
-
 /**
- * Creates a promotional video using fal.ai
- * Strategy: image-to-video from the generated poster, fallback to text-to-video
+ * Creates a promotional video from the poster image using ffmpeg.
+ * Produces a 10-second Ken Burns effect video with the campaign title overlay.
+ * This is free and works without any API key.
  */
 export const createPromotionalVideo = async (
   title: string,
@@ -23,71 +19,68 @@ export const createPromotionalVideo = async (
   posterUrl?: string,
   language: string = 'en'
 ): Promise<VideoResult> => {
-  if (!FAL_KEY) {
-    throw new Error('FAL_API_KEY not configured');
+  if (!posterUrl) {
+    throw new Error('No poster URL provided for video generation');
   }
 
-  // Strategy 1: If we have a poster image, animate it into a video
-  if (posterUrl) {
-    try {
-      console.log('[fal.ai] Generating video from poster image (Kling v3 image-to-video)...');
-      const result = await fal.subscribe('fal-ai/kling-video/v3/pro/image-to-video', {
-        input: {
-          start_image_url: posterUrl,
-          prompt: `Cinematic promotional video for "${title}". Smooth camera movement, professional lighting, vibrant brand colors, premium aesthetic. ${description.substring(0, 150)}`,
-          duration: '5',
-          generate_audio: false,
-          negative_prompt: 'blur, distort, low quality, text, watermark',
-          cfg_scale: 0.5,
-        },
-        logs: true,
-        onQueueUpdate: (update: any) => {
-          if (update.status === 'IN_PROGRESS') {
-            update.logs?.map((log: any) => log.message).forEach(console.log);
-          }
-        },
-      });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adforge-video-'));
+  const inputImage = path.join(tmpDir, 'input.jpg');
+  const outputVideo = path.join(tmpDir, 'output.mp4');
 
-      const data = result.data as any;
-      if (data?.video?.url) {
-        console.log(`[fal.ai] Video generated: ${data.video.url}`);
-        return { url: data.video.url, projectId: 'fal-kling-i2v' };
-      }
-    } catch (e: any) {
-      console.error('[fal.ai] Kling image-to-video failed:', e?.message || e);
-    }
-  }
-
-  // Strategy 2: Text-to-video
   try {
-    console.log('[fal.ai] Generating video from text (Kling v3 text-to-video)...');
-    const videoPrompt = `Professional promotional advertisement for "${title}". ${description.substring(0, 200)}. Cinematic lighting, smooth camera pan, vibrant colors, premium brand aesthetic, studio quality.`;
+    // Download the poster image
+    console.log('[Video] Downloading poster image...');
+    const response = await fetch(posterUrl);
+    if (!response.ok) throw new Error(`Failed to download poster: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.writeFileSync(inputImage, buffer);
+    console.log(`[Video] Poster downloaded (${buffer.length} bytes)`);
 
-    const result = await fal.subscribe('fal-ai/kling-video/v3/pro/text-to-video', {
-      input: {
-        prompt: videoPrompt,
-        duration: '5',
-        aspect_ratio: '1:1',
-        generate_audio: false,
-        negative_prompt: 'blur, distort, low quality, text, watermark',
-        cfg_scale: 0.5,
-      },
-      logs: true,
-      onQueueUpdate: (update: any) => {
-        if (update.status === 'IN_PROGRESS') {
-          update.logs?.map((log: any) => log.message).forEach(console.log);
-        }
-      },
+    // Create a Ken Burns effect video: slow zoom + pan with title overlay
+    // Duration: 10 seconds, 30fps, 1080x1080 (square for social media)
+    const duration = 10;
+    const fps = 30;
+    const totalFrames = duration * fps;
+
+    // Escape special characters in the title for ffmpeg drawtext
+    const escapedTitle = title.replace(/'/g, "\\'").replace(/:/g, "\\:");
+    const escapedDesc = description.substring(0, 80).replace(/'/g, "\\'").replace(/:/g, "\\:");
+
+    // Ken Burns: slow zoom in from 100% to 120% with slight pan
+    const ffmpegCmd = [
+      'ffmpeg -y',
+      `-loop 1 -i "${inputImage}"`,
+      '-vf', `"scale=1920:1920:force_original_aspect_ratio=increase,crop=1920:1920,` +
+        `zoompan=z='min(zoom+0.001,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1080x1080:fps=${fps},` +
+        `drawtext=text='${escapedTitle}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=h-120:shadowcolor=black@0.8:shadowx=2:shadowy=2,` +
+        `drawtext=text='${escapedDesc}':fontcolor=white@0.8:fontsize=28:x=(w-text_w)/2:y=h-60:shadowcolor=black@0.6:shadowx=1:shadowy=1"`,
+      '-c:v libx264',
+      '-t', String(duration),
+      '-pix_fmt yuv420p',
+      '-preset fast',
+      '-crf 23',
+      `"${outputVideo}"`,
+    ].join(' ');
+
+    console.log('[Video] Generating video with ffmpeg...');
+    execSync(ffmpegCmd, {
+      timeout: 120000,
+      stdio: 'pipe',
+      maxBuffer: 50 * 1024 * 1024,
     });
 
-    const data = result.data as any;
-    if (data?.video?.url) {
-      console.log(`[fal.ai] Text-to-video generated: ${data.video.url}`);
-      return { url: data.video.url, projectId: 'fal-kling-t2v' };
-    }
-  } catch (e: any) {
-    console.error('[fal.ai] Kling text-to-video failed:', e?.message || e);
-  }
+    // Verify the video was created
+    const stats = fs.statSync(outputVideo);
+    console.log(`[Video] Video created: ${stats.size} bytes`);
 
-  throw new Error('fal.ai video generation failed - all methods exhausted');
+    if (stats.size < 1000) {
+      throw new Error('Video file too small, likely corrupt');
+    }
+
+    return { url: outputVideo, projectId: 'ffmpeg-local' };
+
+  } catch (e: any) {
+    console.error('[Video] Generation failed:', e?.message || e);
+    throw e;
+  }
 };
