@@ -28,12 +28,59 @@ const detectLanguage = async (text: string): Promise<string> => {
   try {
     const response = await gemini.models.generateContent({
       model: 'gemini-2.0-flash',
-      contents: `Detect the language. Reply ONLY with the 2-letter code (en, fr, es, de, pt, zh, ja, ko, ar, ha, yo, sw). No explanation.\n\n"${text}"`,
+      contents: `Detect the language of this text. Reply ONLY with the 2-letter ISO code (en, fr, es, de, pt, zh, ja, ko, ar, ha, yo, sw, it, nl, ru, hi, tr, vi, th, id). No explanation, no punctuation, just the code.\n\n"${text}"`,
     });
-    return response.text?.trim().toLowerCase().replace(/[^a-z]/g, '').substring(0, 2) || 'en';
-  } catch {
+    const code = response.text?.trim().toLowerCase().replace(/[^a-z]/g, '').substring(0, 2) || 'en';
+    console.log(`[Genblaze] Detected language: ${code}`);
+    return code;
+  } catch (e) {
+    console.error('[Genblaze] Language detection failed:', e);
     return 'en';
   }
+};
+
+/**
+ * Step 1: Generate a detailed campaign description from the user's short prompt.
+ * The user might type "organic skincare" or "restaurant promo" - we expand it into
+ * a rich description that gives the AI enough context to generate great content.
+ */
+const generateDetailedDescription = async (userPrompt: string, language: string): Promise<string> => {
+  const langName = LANG_NAMES[language] || 'English';
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a marketing expert who expands short prompts into detailed campaign briefs. Write in ${langName}. Be specific and detailed.`
+        },
+        {
+          role: 'user',
+          content: `The user wants to create a marketing campaign. Their prompt is: "${userPrompt}"
+
+Expand this into a detailed campaign brief (150-300 words) that includes:
+1. What the product/service is (be specific)
+2. Key features and benefits
+3. Target audience
+4. What makes it unique/special
+5. Suggested promotional angle or offer
+6. The vibe/mood of the brand
+
+Write it as a natural paragraph, not bullet points. Be creative but stay true to what the user described.`
+        }
+      ],
+      max_tokens: 600,
+      temperature: 0.8,
+    });
+    const result = completion.choices[0]?.message?.content?.trim();
+    if (result && result.length > 50) {
+      console.log(`[Genblaze] Expanded description (${result.split(' ').length} words)`);
+      return result;
+    }
+  } catch (e) {
+    console.error('[OpenAI] Description expansion failed:', e);
+  }
+  return userPrompt;
 };
 
 const generateCampaignTitle = async (description: string, language: string): Promise<string> => {
@@ -42,47 +89,69 @@ const generateCampaignTitle = async (description: string, language: string): Pro
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: `Expert copywriter. Output ONLY the title, nothing else. Write in ${langName}.` },
-        { role: 'user', content: `Generate ONE short, powerful campaign title (max 6 words) for: "${description}". Create urgency. No quotes, no period.` }
+        { role: 'system', content: `You are a world-class copywriter. Write in ${langName}. Output ONLY the title.` },
+        { role: 'user', content: `Create ONE powerful, catchy campaign title (max 6 words) for this marketing campaign:\n\n"${description.substring(0, 500)}"\n\nRules: No quotes, no period, create urgency, make it memorable.` }
       ],
-      max_tokens: 50,
+      max_tokens: 30,
       temperature: 0.9,
     });
-    return completion.choices[0]?.message?.content?.trim() || description.substring(0, 50);
+    return completion.choices[0]?.message?.content?.trim() || description.substring(0, 40);
   } catch (e) {
     console.error('[OpenAI] Title failed:', e);
-    return description.substring(0, 50);
+    return description.substring(0, 40);
   }
 };
 
 /**
- * Generate a campaign poster image.
- * Strategy: Try fal.ai Flux Pro first, fall back to Pollinations (free)
+ * Generate a campaign poster image using AI.
+ * 1. OpenAI writes a detailed visual prompt based on the user's product
+ * 2. fal.ai Flux Pro generates the image (if available)
+ * 3. Falls back to Pollinations.ai (free) if fal.ai fails
+ * 4. Uploads to Backblaze B2
  */
 const generatePosterImage = async (title: string, description: string, campaignId: string, language: string): Promise<string> => {
-  // Step 1: Generate a detailed visual prompt using OpenAI
-  let visualPrompt = `professional advertising poster for ${title}, premium brand aesthetic, vibrant colors, 8k photorealistic, studio lighting, modern design`;
+  // Step 1: Use OpenAI to write a detailed visual prompt
+  let visualPrompt = '';
   try {
     const promptCompletion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You write image generation prompts for AI image generators. Output ONLY the prompt, nothing else. Be extremely detailed and vivid.' },
-        { role: 'user', content: `Write a detailed, vivid image prompt for an advertising poster. The poster is for: "${title}" - ${description}. Describe the exact scene, products, colors, lighting, mood, and style. Be very specific about what should appear in the image. Keep under 400 characters.` }
+        {
+          role: 'system',
+          content: `You are an expert at writing prompts for AI image generators like DALL-E, Midjourney, and Stable Diffusion. Output ONLY the image prompt, nothing else. Be extremely specific about what the image should look like.`
+        },
+        {
+          role: 'user',
+          content: `Write a detailed image generation prompt for a marketing poster. The campaign is:
+
+TITLE: "${title}"
+DESCRIPTION: ${description.substring(0, 600)}
+
+The prompt should describe:
+- The exact scene/composition (what objects, people, or elements are in the image)
+- Colors and lighting (warm tones, neon, natural light, etc.)
+- Style (photorealistic, minimalist, luxurious, etc.)
+- The overall mood and feeling
+- Any text or branding elements visible
+
+Keep the prompt under 300 words. Be vivid and specific. Do NOT use the words "placeholder" or "example".`
+        }
       ],
-      max_tokens: 200,
-      temperature: 0.8,
+      max_tokens: 400,
+      temperature: 0.85,
     });
-    const generated = promptCompletion.choices[0]?.message?.content?.trim();
-    if (generated && generated.length > 20) {
-      visualPrompt = generated;
-    }
+    visualPrompt = promptCompletion.choices[0]?.message?.content?.trim() || '';
+    console.log(`[Genblaze] Visual prompt (${visualPrompt.length} chars): ${visualPrompt.substring(0, 120)}...`);
   } catch (e) {
-    console.error('[OpenAI] Image prompt generation failed:', e);
+    console.error('[OpenAI] Visual prompt generation failed:', e);
+    visualPrompt = `Professional marketing poster for ${title}. ${description.substring(0, 200)}. High quality, vibrant colors, modern design, studio lighting, 8K photorealistic.`;
   }
 
-  console.log(`[Genblaze] Visual prompt: ${visualPrompt}`);
+  if (!visualPrompt || visualPrompt.length < 20) {
+    visualPrompt = `Professional marketing poster for ${title}. Modern design, vibrant colors, studio lighting, 8K quality.`;
+  }
 
-  // Strategy 1: Try fal.ai Flux Pro (paid, high quality)
+  // Step 2: Try fal.ai Flux Pro first (high quality, paid)
   if (FAL_KEY) {
     try {
       console.log(`[Genblaze] Trying fal.ai Flux Pro...`);
@@ -95,44 +164,36 @@ const generatePosterImage = async (title: string, description: string, campaignI
           safety_tolerance: '3',
           enhance_prompt: true,
         },
-        logs: true,
-        onQueueUpdate: (update: any) => {
-          if (update.status === 'IN_PROGRESS') {
-            update.logs?.map((log: any) => log.message).forEach(console.log);
-          }
-        },
       });
 
       const data = result.data as any;
       const imageUrl = data?.images?.[0]?.url;
 
       if (imageUrl) {
-        console.log(`[Genblaze] fal.ai image generated: ${imageUrl.substring(0, 80)}...`);
-        // Try to upload to B2
+        console.log(`[Genblaze] fal.ai image: ${imageUrl.substring(0, 80)}...`);
         try {
           const b2Url = await uploadFromUrl(imageUrl, `campaigns/${campaignId}/poster_${Date.now()}.jpg`);
-          console.log(`[Genblaze] Poster saved to B2: ${b2Url}`);
+          console.log(`[Genblaze] Saved to B2: ${b2Url}`);
           return b2Url;
-        } catch (b2Err) {
-          console.log(`[Genblaze] B2 upload failed, using fal CDN URL`);
+        } catch {
           return imageUrl;
         }
       }
     } catch (e: any) {
-      console.error('[Genblaze] fal.ai image failed, falling back to Pollinations:', e?.message || e);
+      console.error('[Genblaze] fal.ai failed:', e?.message?.substring(0, 100) || e);
     }
   }
 
-  // Strategy 2: Pollinations.ai (free, no API key needed)
-  try {
-    console.log(`[Genblaze] Using Pollinations.ai (free fallback)...`);
-    const encodedPrompt = encodeURIComponent(visualPrompt);
-    const randomSeed = Math.floor(Math.random() * 1000000);
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${randomSeed}&enhance=true`;
+  // Step 3: Pollinations.ai (free, generates from prompt)
+  console.log(`[Genblaze] Using Pollinations.ai...`);
+  const encodedPrompt = encodeURIComponent(visualPrompt);
+  const seed = Math.floor(Math.random() * 999999);
+  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${seed}&enhance=true`;
 
-    // Download the image
+  // Download and upload to B2
+  try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 90000);
     const response = await fetch(pollinationsUrl, { signal: controller.signal });
     clearTimeout(timeout);
 
@@ -140,31 +201,28 @@ const generatePosterImage = async (title: string, description: string, campaignI
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       const contentType = response.headers.get('content-type') || 'image/jpeg';
-      const fileName = `campaigns/${campaignId}/poster_${Date.now()}.jpg`;
+      console.log(`[Genblaze] Pollinations image downloaded (${buffer.length} bytes)`);
 
-      // Try to upload to B2
       try {
-        const b2Url = await uploadBuffer(buffer, fileName, contentType);
-        console.log(`[Genblaze] Poster saved to B2: ${b2Url}`);
+        const b2Url = await uploadBuffer(buffer, `campaigns/${campaignId}/poster_${Date.now()}.jpg`, contentType);
+        console.log(`[Genblaze] Saved to B2: ${b2Url}`);
         return b2Url;
       } catch (b2Err) {
-        console.log(`[Genblaze] B2 upload failed, saving locally`);
-        const fs = require('fs');
-        const path = require('path');
-        const localDir = path.join(process.cwd(), 'uploads', 'generated', campaignId);
-        fs.mkdirSync(localDir, { recursive: true });
-        const localPath = path.join(localDir, `poster_${Date.now()}.jpg`);
-        fs.writeFileSync(localPath, buffer);
+        console.log(`[Genblaze] B2 failed, returning Pollinations URL`);
         return pollinationsUrl;
       }
     }
-  } catch (e) {
-    console.error('[Genblaze] Pollinations fallback also failed:', e);
+  } catch (e: any) {
+    console.error('[Genblaze] Pollinations failed:', e?.message || e);
   }
 
   throw new Error('All image generation methods failed');
 };
 
+/**
+ * Generate a long, compelling social media caption using OpenAI.
+ * The caption is directly about the user's specific product/service.
+ */
 const generateCaption = async (title: string, description: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
@@ -173,57 +231,42 @@ const generateCaption = async (title: string, description: string, language: str
       messages: [
         {
           role: 'system',
-          content: `You are the world's #1 social media copywriter who has generated viral posts for Nike, Apple, and Coca-Cola. You write captions that make people stop scrolling, feel emotions, and BUY. Your captions are LONG (500-800 words), tell a story, and convert readers into customers. Write in ${langName}. NEVER write short captions.`
+          content: `You are the world's #1 social media copywriter. You write captions for brands like Nike, Apple, and Coca-Cola that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy. Write in ${langName}.`
         },
         {
           role: 'user',
-          content: `Write a LONG-FORM, POWERFUL social media caption (500-800 words minimum!) for this EXACT campaign. This should be the kind of caption that goes VIRAL on Instagram, Facebook, and LinkedIn.
+          content: `Write a POWERFUL, LONG-FORM social media caption (500-800 words) for this campaign:
 
 CAMPAIGN TITLE: "${title}"
-CAMPAIGN DETAILS: ${description}
+PRODUCT/SERVICE DETAILS: ${description}
 
-CAPTION STRUCTURE (follow this exactly):
+Write the caption with this structure:
 
-**LINE 1 - THE HOOK (stops the scroll)**
-Start with a question, bold statement, or surprising fact that makes people READ MORE.
-
-**PARAGRAPH 1 - THE STORY (connect emotionally)**
-Tell the story behind this product/service. Why does it exist? What problem does it solve? Who created it and why?
-
-**PARAGRAPH 2 - THE DETAILS (inform and impress)**
-Describe exactly what makes this product/service special. Mention specific features, ingredients, prices, discounts, locations, or any detail from the description.
-
-**PARAGRAPH 3 - THE BENEFITS (show the transformation)**
-Explain how this product/service will CHANGE the customer's life. What will they gain? What pain will be eliminated?
-
-**PARAGRAPH 4 - THE SOCIAL PROOF (build trust)**
-Mention quality guarantees, customer satisfaction, awards, or any reason to trust this brand.
-
-**PARAGRAPH 5 - THE URGENCY (drive action)**
-Create urgency - limited time, limited stock, exclusive deal, seasonal, first 100 customers, etc.
-
-**PARAGRAPH 6 - THE CTA (tell them what to do)**
-Clear call to action: follow, visit, order, DM, click link, etc.
-
-**PARAGRAPH 7 - THE HASHTAGS**
-5-8 relevant trending hashtags.
+1. HOOK - First line that stops the scroll (question, bold statement, or surprising fact)
+2. STORY - 2-3 paragraphs about the product/service, why it exists, who it's for
+3. DETAILS - Specific features, ingredients, prices, discounts, locations
+4. BENEFITS - How this changes the customer's life
+5. SOCIAL PROOF - Quality, satisfaction, awards, trust
+6. URGENCY - Limited time, limited stock, exclusive deal
+7. CTA - Clear call to action (follow, visit, order, DM)
+8. HASHTAGS - 5-8 relevant trending hashtags
 
 RULES:
 - Write MINIMUM 500 words
-- Reference SPECIFIC details from the description (prices, locations, ingredients, discounts, target audience)
-- Use emojis strategically (not too many, but enough to break text)
-- Feel personal and authentic, like a real person talking
+- Reference SPECIFIC details from the description
+- Use emojis strategically throughout
+- Feel personal and authentic
 - Use short paragraphs for readability
-- Include specific numbers, percentages, or details when available
-- Work perfectly for Instagram, Facebook, LinkedIn, and Twitter
-- The caption should make someone who reads it FEEL something and WANT to take action`
+- Include specific numbers, prices, or percentages
+- Make someone FEEL something and WANT to take action
+- No generic filler - every sentence must be about THIS specific product`
         }
       ],
       max_tokens: 2000,
       temperature: 0.85,
     });
     const caption = completion.choices[0]?.message?.content?.trim() || '';
-    console.log(`[Genblaze] Caption length: ${caption.split(' ').length} words`);
+    console.log(`[Genblaze] Caption: ${caption.split(' ').length} words`);
     return caption;
   } catch (e) {
     console.error('[OpenAI] Caption failed:', e);
@@ -237,25 +280,15 @@ const generateStrategy = async (title: string, description: string, language: st
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'system',
-          content: `World-class marketing strategist with 15 years experience for Fortune 500 brands. Write in ${langName}.`
-        },
+        { role: 'system', content: `World-class marketing strategist. Write in ${langName}.` },
         {
           role: 'user',
           content: `Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips for THIS exact campaign:
 
 TITLE: "${title}"
-DESCRIPTION: ${description}
+DESCRIPTION: ${description.substring(0, 500)}
 
-Each tip must:
-- Be SPECIFIC to this exact product/service (not generic advice)
-- Include concrete numbers, platforms, timing, and budget suggestions
-- Focus on ROI-driving actions the user can take TODAY
-- Be 2-3 sentences with real detail
-- Be bold and decisive
-
-Format as numbered list (1-3).`
+Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3).`
         }
       ],
       max_tokens: 500,
@@ -282,38 +315,40 @@ export const generateCampaignAssets = async (campaignId: string) => {
       data: { status: 'generating' },
     });
 
-    const description = campaign.description || 'A great product';
+    const userPrompt = campaign.description || 'A great product';
 
-    // Step 1: Detect language
-    const language = await detectLanguage(description);
-    const langName = LANG_NAMES[language] || 'English';
-    console.log(`[Genblaze] Detected language: ${language}`);
+    // Step 1: Detect language from user's prompt
+    const language = await detectLanguage(userPrompt);
 
-    // Step 2: Generate title
+    // Step 2: Generate detailed description from user's short prompt
+    const description = await generateDetailedDescription(userPrompt, language);
+    console.log(`[Genblaze] Description expanded to ${description.split(' ').length} words`);
+
+    // Step 3: Generate title
     const title = await generateCampaignTitle(description, language);
-    await prisma.campaign.update({ where: { id: campaignId }, data: { title } });
+    await prisma.campaign.update({ where: { id: campaignId }, data: { title, description } });
     console.log(`[Genblaze] Title: ${title}`);
 
-    // Step 3 & 4: Generate image AND caption in parallel (both fast)
+    // Step 4 & 5: Generate image AND caption in parallel
     console.log(`[Genblaze] Generating image and caption in parallel...`);
     const [posterResult, captionResult] = await Promise.allSettled([
       generatePosterImage(title, description, campaignId, language),
       generateCaption(title, description, language),
     ]);
 
-    // Handle image result
+    // Handle image
     let posterUrl = '';
     if (posterResult.status === 'fulfilled') {
       posterUrl = posterResult.value;
       await prisma.generatedFile.create({
         data: { campaignId, url: posterUrl, type: 'poster' }
       });
-      console.log(`[Genblaze] Image generated: ${posterUrl.substring(0, 80)}...`);
+      console.log(`[Genblaze] Image: ${posterUrl.substring(0, 80)}...`);
     } else {
-      console.error('[Genblaze] Image generation failed:', posterResult.reason);
+      console.error('[Genblaze] Image FAILED:', posterResult.reason);
     }
 
-    // Handle caption result
+    // Handle caption
     let caption = captionResult.status === 'fulfilled' ? captionResult.value : '';
     if (!caption) {
       caption = `Discover ${title} - ${description}`;
@@ -321,33 +356,31 @@ export const generateCampaignAssets = async (campaignId: string) => {
     await prisma.generatedFile.create({
       data: { campaignId, url: '', type: 'caption', content: caption }
     });
-    console.log(`[Genblaze] Caption generated (${caption.split(' ').length} words)`);
+    console.log(`[Genblaze] Caption: ${caption.split(' ').length} words`);
 
-    // Step 5: Generate strategy (fast)
+    // Step 6: Generate strategy
     let suggestions = await generateStrategy(title, description, language);
     if (!suggestions) {
-      suggestions = language === 'fr'
-        ? "1. Lancez une campagne Instagram Reels ciblant les 18-35 ans aux heures de pointe (19h-21h) avec un budget de 50-100 FCFA par clic.\n2. Créez une offre flash 48h exclusive WhatsApp Status avec un code promo pour créer l'urgence.\n3. Contactez 5-10 micro-influenceurs locaux pour un partenariat de contenu authentique."
-        : "1. Run an Instagram Reels campaign targeting 18-35 year-olds during peak hours (7-9 PM) with $0.50-1.00 CPC budget for maximum reach.\n2. Create a 48-hour flash sale exclusive to WhatsApp Status viewers with a unique promo code to drive urgency.\n3. Partner with 5-10 local micro-influencers for authentic UGC content that builds trust and social proof.";
+      suggestions = "1. Run targeted social media ads on Instagram and TikTok for maximum reach.\n2. Partner with local micro-influencers for authentic content.\n3. Create limited-time offer to drive urgency.";
     }
     await prisma.generatedFile.create({
       data: { campaignId, url: '', type: 'caption', content: `STRATEGY:${suggestions}` }
     });
 
-    // Mark campaign as completed NOW (without video)
+    // Mark campaign as completed
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'completed' },
     });
-    console.log(`[Genblaze] Campaign ${campaignId} completed (${language}). Image + caption + strategy done.`);
+    console.log(`[Genblaze] Campaign ${campaignId} completed`);
 
-    // Step 6: Generate video in BACKGROUND (don't block the user)
+    // Step 7: Generate video in background
     generateVideoInBackground(campaignId, title, description, posterUrl, language).catch(e => {
       console.error('[Genblaze] Background video failed:', e);
     });
 
   } catch (error) {
-    console.error(`Error generating assets for campaign ${campaignId}:`, error);
+    console.error(`[Genblaze] Campaign ${campaignId} FAILED:`, error);
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'failed' },
@@ -355,11 +388,6 @@ export const generateCampaignAssets = async (campaignId: string) => {
   }
 };
 
-/**
- * Generate video in background AFTER campaign is marked completed.
- * The user can already see their image, caption, and strategy.
- * Video will appear when ready.
- */
 const generateVideoInBackground = async (
   campaignId: string,
   title: string,
@@ -367,18 +395,17 @@ const generateVideoInBackground = async (
   posterUrl: string,
   language: string
 ) => {
-  console.log(`[Genblaze] Starting background video generation for ${campaignId}...`);
+  console.log(`[Genblaze] Starting background video for ${campaignId}...`);
   try {
     const videoResult = await createPromotionalVideo(title, description, posterUrl, language);
-    if (videoResult && videoResult.url) {
-      const videoFileName = `campaigns/${campaignId}/video_${Date.now()}.mp4`;
-      const videoUrl = await uploadFromUrl(videoResult.url, videoFileName);
+    if (videoResult?.url) {
+      const videoUrl = await uploadFromUrl(videoResult.url, `campaigns/${campaignId}/video_${Date.now()}.mp4`);
       await prisma.generatedFile.create({
         data: { campaignId, url: videoUrl, type: 'video' }
       });
-      console.log(`[Genblaze] Background video completed: ${videoUrl.substring(0, 80)}...`);
+      console.log(`[Genblaze] Video completed: ${videoUrl.substring(0, 80)}...`);
     }
   } catch (e: any) {
-    console.error('[Genblaze] Background video generation failed:', e?.message || e);
+    console.error('[Genblaze] Video failed:', e?.message || e);
   }
 };

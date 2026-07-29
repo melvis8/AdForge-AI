@@ -87,7 +87,7 @@ export default function CampaignCreationScreen({ navigation }: Props) {
           <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
         <Text style={[styles.title, { fontSize: isTablet ? 40 : 34 }]}>Create Campaign</Text>
-        <Text style={styles.subtitle}>Describe your product & let AI do the rest.</Text>
+        <Text style={styles.subtitle}>Describe your product & AI handles the rest.</Text>
       </View>
       
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingHorizontal: horizontalPad, paddingBottom: isSmallScreen ? 20 : 40 }]} showsVerticalScrollIndicator={false}>
@@ -97,7 +97,7 @@ export default function CampaignCreationScreen({ navigation }: Props) {
           <TextInput
             style={[styles.textInput, { fontSize: isTablet ? 18 : 16 }]}
             multiline
-            placeholder="Describe your product or service. The more details you give, the better your campaign will be. Example: Organic skincare brand launching a new Vitamin C serum with 30% off for the first 100 customers"
+            placeholder="e.g. Organic skincare brand launching a Vitamin C serum with 30% off"
             placeholderTextColor="#94a3b8"
             value={description}
             onChangeText={setDescription}

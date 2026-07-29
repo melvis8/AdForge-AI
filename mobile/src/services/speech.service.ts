@@ -18,9 +18,9 @@ const startWebRecording = (): Promise<void> => {
     }
 
     webRecognition = new SpeechRecognition();
-    webRecognition.continuous = true;
+    webRecognition.continuous = false;
     webRecognition.interimResults = false;
-    webRecognition.lang = 'auto';
+    webRecognition.lang = navigator.language || 'en-US';
 
     webRecognition.onresult = (event: any) => {
       let transcript = '';
@@ -36,7 +36,11 @@ const startWebRecording = (): Promise<void> => {
     webRecognition.onerror = (event: any) => {
       console.error('[Speech] Web recognition error:', event.error);
       if (webResolve) {
-        webResolve(`Speech recognition error: ${event.error}. Please type instead.`);
+        if (event.error === 'no-speech') {
+          webResolve('No speech detected. Please try again.');
+        } else {
+          webResolve(`Speech error: ${event.error}. Please type instead.`);
+        }
         webResolve = null;
       }
     };
