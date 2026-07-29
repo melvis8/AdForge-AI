@@ -2,20 +2,12 @@ import { PrismaClient } from '@prisma/client';
 import { createPromotionalVideo } from './video.service';
 import { uploadFromUrl, uploadBuffer } from './storage.service';
 import { GoogleGenAI } from '@google/genai';
-import OpenAI from 'openai';
-import { fal } from '@fal-ai/client';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const prisma = new PrismaClient();
 const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
-const FAL_KEY = process.env.FAL_API_KEY || '';
-
-if (FAL_KEY) {
-  fal.config({ credentials: FAL_KEY });
-}
 
 const LANG_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
@@ -74,16 +66,11 @@ const detectLanguage = async (text: string): Promise<string> => {
 const generateDetailedDescription = async (userPrompt: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. This is a strict requirement.`
-        },
-        {
-          role: 'user',
-          content: `The user wants to create a marketing campaign. Their prompt is: "${userPrompt}"
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language.
+
+The user wants to create a marketing campaign. Their prompt is: "${userPrompt}"
 
 Expand this into a detailed campaign brief (200-400 words) that includes:
 1. What the product/service is (be specific)
@@ -93,19 +80,15 @@ Expand this into a detailed campaign brief (200-400 words) that includes:
 5. Suggested promotional angle or offer
 6. The vibe/mood of the brand
 
-Write it as a natural paragraph in ${langName}. Be creative but stay true to what the user described.`
-        }
-      ],
-      max_tokens: 800,
-      temperature: 0.8,
+Write it as a natural paragraph in ${langName}. Be creative but stay true to what the user described.`,
     });
-    const result = completion.choices[0]?.message?.content?.trim();
-    if (result && result.length > 50) {
+    const result = response.text?.trim() || '';
+    if (result.length > 50) {
       console.log(`[Genblaze] Expanded description (${result.split(' ').length} words, ${language})`);
       return result;
     }
   } catch (e) {
-    console.error('[OpenAI] Description expansion failed:', e);
+    console.error('[Gemini] Description expansion failed:', e);
   }
   return userPrompt;
 };
@@ -113,18 +96,19 @@ Write it as a natural paragraph in ${langName}. Be creative but stay true to wha
 const generateCampaignTitle = async (description: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. You are a world-class copywriter. Output ONLY the title.` },
-        { role: 'user', content: `Create ONE powerful, catchy campaign title (max 6 words) for this marketing campaign:\n\n"${description.substring(0, 500)}"\n\nRules: Write in ${langName}. No quotes, no period, create urgency, make it memorable.` }
-      ],
-      max_tokens: 30,
-      temperature: 0.9,
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: `CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. You are a world-class copywriter. Output ONLY the title.
+
+Create ONE powerful, catchy campaign title (max 6 words) for this marketing campaign:
+
+"${description.substring(0, 500)}"
+
+Rules: Write in ${langName}. No quotes, no period, create urgency, make it memorable.`,
     });
-    return completion.choices[0]?.message?.content?.trim() || description.substring(0, 40);
+    return response.text?.trim() || description.substring(0, 40);
   } catch (e) {
-    console.error('[OpenAI] Title failed:', e);
+    console.error('[Gemini] Title failed:', e);
     return description.substring(0, 40);
   }
 };
@@ -137,113 +121,78 @@ const generateCampaignTitle = async (description: string, language: string): Pro
  * 4. Uploads to Backblaze B2
  */
 const generatePosterImage = async (title: string, description: string, campaignId: string, language: string): Promise<string> => {
-  // Step 1: Use OpenAI to write a detailed visual prompt
-  let visualPrompt = '';
+  console.log(`[Genblaze] Generating image with Gemini...`);
   try {
-    const promptCompletion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `You are an expert at writing prompts for AI image generators like DALL-E, Midjourney, and Stable Diffusion. Output ONLY the image prompt, nothing else. Be extremely specific about what the image should look like.`
-        },
-        {
-          role: 'user',
-          content: `Write a detailed image generation prompt for a marketing poster. The campaign is:
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: `Generate a professional marketing poster image for this campaign:
 
 TITLE: "${title}"
 DESCRIPTION: ${description.substring(0, 600)}
 
-The prompt should describe:
-- The exact scene/composition (what objects, people, or elements are in the image)
-- Colors and lighting (warm tones, neon, natural light, etc.)
-- Style (photorealistic, minimalist, luxurious, etc.)
-- The overall mood and feeling
-- Any text or branding elements visible
-
-Keep the prompt under 300 words. Be vivid and specific. Do NOT use the words "placeholder" or "example".`
-        }
-      ],
-      max_tokens: 400,
-      temperature: 0.85,
+Create a visually striking, high-quality marketing poster. The image should be:
+- Professional and eye-catching
+- Modern design with vibrant colors
+- Appropriate for social media (square format)
+- Visually compelling that makes people want to stop scrolling
+- No text or words in the image - just the visual scene`,
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      },
     });
-    visualPrompt = promptCompletion.choices[0]?.message?.content?.trim() || '';
-    console.log(`[Genblaze] Visual prompt (${visualPrompt.length} chars): ${visualPrompt.substring(0, 120)}...`);
-  } catch (e) {
-    console.error('[OpenAI] Visual prompt generation failed:', e);
-    visualPrompt = `Professional marketing poster for ${title}. ${description.substring(0, 200)}. High quality, vibrant colors, modern design, studio lighting, 8K photorealistic.`;
-  }
 
-  if (!visualPrompt || visualPrompt.length < 20) {
-    visualPrompt = `Professional marketing poster for ${title}. Modern design, vibrant colors, studio lighting, 8K quality.`;
-  }
+    // Extract image from response parts
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        const imageBuffer = Buffer.from(part.inlineData.data, 'base64');
+        const mimeType = part.inlineData.mimeType || 'image/jpeg';
+        const ext = mimeType.includes('png') ? 'png' : 'jpg';
+        console.log(`[Genblaze] Gemini image generated (${imageBuffer.length} bytes)`);
 
-  // Step 2: Try fal.ai Flux Pro first (high quality, paid)
-  if (FAL_KEY) {
-    try {
-      console.log(`[Genblaze] Trying fal.ai Flux Pro...`);
-      const result = await fal.subscribe('fal-ai/flux-pro/v1.1', {
-        input: {
-          prompt: visualPrompt,
-          image_size: 'square_hd',
-          num_images: 1,
-          output_format: 'jpeg',
-          safety_tolerance: '3',
-          enhance_prompt: true,
-        },
-      });
-
-      const data = result.data as any;
-      const imageUrl = data?.images?.[0]?.url;
-
-      if (imageUrl) {
-        console.log(`[Genblaze] fal.ai image: ${imageUrl.substring(0, 80)}...`);
-        try {
-          const b2Url = await uploadFromUrl(imageUrl, `campaigns/${campaignId}/poster_${Date.now()}.jpg`);
-          console.log(`[Genblaze] Saved to B2: ${b2Url}`);
-          return b2Url;
-        } catch {
-          return imageUrl;
-        }
-      }
-    } catch (e: any) {
-      console.error('[Genblaze] fal.ai failed:', e?.message?.substring(0, 100) || e);
-    }
-  }
-
-  // Step 3: Pollinations.ai (free, generates from prompt)
-  console.log(`[Genblaze] Using Pollinations.ai...`);
-  const encodedPrompt = encodeURIComponent(visualPrompt);
-  const seed = Math.floor(Math.random() * 999999);
-  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${seed}&enhance=true`;
-
-  // Download and upload to B2
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90000);
-    const response = await fetch(pollinationsUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (response.ok) {
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      const contentType = response.headers.get('content-type') || 'image/jpeg';
-      console.log(`[Genblaze] Pollinations image downloaded (${buffer.length} bytes)`);
-
-      try {
-        const b2Url = await uploadBuffer(buffer, `campaigns/${campaignId}/poster_${Date.now()}.jpg`, contentType);
+        const b2Url = await uploadBuffer(
+          imageBuffer,
+          `campaigns/${campaignId}/poster_${Date.now()}.${ext}`,
+          mimeType
+        );
         console.log(`[Genblaze] Saved to B2: ${b2Url}`);
         return b2Url;
-      } catch (b2Err) {
-        console.log(`[Genblaze] B2 failed, returning Pollinations URL`);
-        return pollinationsUrl;
       }
     }
-  } catch (e: any) {
-    console.error('[Genblaze] Pollinations failed:', e?.message || e);
-  }
 
-  throw new Error('All image generation methods failed');
+    // If no image in response, try with a simpler prompt
+    console.log(`[Genblaze] No image in response, retrying with simpler prompt...`);
+    const retryResponse = await gemini.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: `Generate a beautiful, colorful marketing poster image for: ${title}. Make it vibrant and professional.`,
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      },
+    });
+
+    const retryParts = retryResponse.candidates?.[0]?.content?.parts || [];
+    for (const part of retryParts) {
+      if (part.inlineData?.data) {
+        const imageBuffer = Buffer.from(part.inlineData.data, 'base64');
+        const mimeType = part.inlineData.mimeType || 'image/jpeg';
+        const ext = mimeType.includes('png') ? 'png' : 'jpg';
+        console.log(`[Genblaze] Gemini retry image generated (${imageBuffer.length} bytes)`);
+
+        const b2Url = await uploadBuffer(
+          imageBuffer,
+          `campaigns/${campaignId}/poster_${Date.now()}.${ext}`,
+          mimeType
+        );
+        console.log(`[Genblaze] Saved to B2: ${b2Url}`);
+        return b2Url;
+      }
+    }
+
+    throw new Error('Gemini did not return an image');
+  } catch (e: any) {
+    console.error('[Gemini] Image generation failed:', e?.message || e);
+    throw e;
+  }
 };
 
 /**
@@ -253,16 +202,13 @@ Keep the prompt under 300 words. Be vivid and specific. Do NOT use the words "pl
 const generateCaption = async (title: string, description: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write a single word in any other language. This is a strict requirement.\n\nYou are the world's #1 social media copywriter. You write captions for brands like Nike, Apple, and Coca-Cola that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy.`
-        },
-        {
-          role: 'user',
-          content: `Write a POWERFUL, LONG-FORM social media caption (500-800 words) entirely in ${langName} for this campaign:
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write a single word in any other language. This is a strict requirement.
+
+You are the world's #1 social media copywriter. You write captions for brands like Nike, Apple, and Coca-Cola that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy.
+
+Write a POWERFUL, LONG-FORM social media caption (500-800 words) entirely in ${langName} for this campaign:
 
 CAMPAIGN TITLE: "${title}"
 PRODUCT/SERVICE DETAILS: ${description}
@@ -288,17 +234,13 @@ RULES:
 - Include specific numbers, prices, or percentages
 - Make someone FEEL something and WANT to take action
 - No generic filler - every sentence must be about THIS specific product
-- Do NOT switch to English or any other language`
-        }
-      ],
-      max_tokens: 2000,
-      temperature: 0.85,
+- Do NOT switch to English or any other language`,
     });
-    const caption = completion.choices[0]?.message?.content?.trim() || '';
+    const caption = response.text?.trim() || '';
     console.log(`[Genblaze] Caption: ${caption.split(' ').length} words (${language})`);
     return caption;
   } catch (e) {
-    console.error('[OpenAI] Caption failed:', e);
+    console.error('[Gemini] Caption failed:', e);
     return '';
   }
 };
@@ -306,28 +248,22 @@ RULES:
 const generateStrategy = async (title: string, description: string, language: string): Promise<string> => {
   const langName = LANG_NAMES[language] || 'English';
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write in any other language. You are a world-class marketing strategist with 15 years of experience.` },
-        {
-          role: 'user',
-          content: `Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips entirely in ${langName} for THIS exact campaign:
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: `CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write in any other language. You are a world-class marketing strategist with 15 years of experience.
+
+Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips entirely in ${langName} for THIS exact campaign:
 
 TITLE: "${title}"
 DESCRIPTION: ${description.substring(0, 500)}
 
-Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3). Write EVERYTHING in ${langName}.`
-        }
-      ],
-      max_tokens: 600,
-      temperature: 0.8,
+Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3). Write EVERYTHING in ${langName}.`,
     });
-    const result = completion.choices[0]?.message?.content?.trim() || '';
+    const result = response.text?.trim() || '';
     console.log(`[Genblaze] Strategy: ${result.split(' ').length} words (${language})`);
     return result;
   } catch (e) {
-    console.error('[OpenAI] Strategy failed:', e);
+    console.error('[Gemini] Strategy failed:', e);
     return '';
   }
 };
@@ -390,14 +326,15 @@ export const generateCampaignAssets = async (campaignId: string) => {
     }
     if (!caption || caption.length < 50) {
       // Last resort: generate a basic caption in the correct language
-      caption = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: `Write in ${LANG_NAMES[language] || 'English'}. Write a 100-word social media caption about this product. Include emojis and hashtags.` },
-          { role: 'user', content: `Product: ${title}\nDetails: ${description.substring(0, 300)}` }
-        ],
-        max_tokens: 300,
-      }).then(r => r.choices[0]?.message?.content?.trim() || `${title} - ${description.substring(0, 100)}`);
+      try {
+        const fallbackResponse = await gemini.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: `Write in ${LANG_NAMES[language] || 'English'}. Write a 100-word social media caption about this product. Include emojis and hashtags.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`,
+        });
+        caption = fallbackResponse.text?.trim() || `${title} - ${description.substring(0, 100)}`;
+      } catch {
+        caption = `${title} - ${description.substring(0, 100)}`;
+      }
     }
     await prisma.generatedFile.create({
       data: { campaignId, url: '', type: 'caption', content: caption }
@@ -415,14 +352,15 @@ export const generateCampaignAssets = async (campaignId: string) => {
     }
     if (!suggestions || suggestions.length < 20) {
       // Last resort: basic strategy in correct language
-      suggestions = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: `Write 3 marketing tips in ${LANG_NAMES[language] || 'English'} for this product. Number them 1-3.` },
-          { role: 'user', content: `Product: ${title}\nDetails: ${description.substring(0, 300)}` }
-        ],
-        max_tokens: 400,
-      }).then(r => r.choices[0]?.message?.content?.trim() || '');
+      try {
+        const fallbackResponse = await gemini.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: `Write 3 marketing tips in ${LANG_NAMES[language] || 'English'} for this product. Number them 1-3.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`,
+        });
+        suggestions = fallbackResponse.text?.trim() || '';
+      } catch {
+        suggestions = '';
+      }
     }
     await prisma.generatedFile.create({
       data: { campaignId, url: '', type: 'caption', content: `STRATEGY:${suggestions}` }
