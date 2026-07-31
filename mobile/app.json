@@ -22,13 +22,19 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "package": "com.melvis8.mobile"
+      "package": "com.melvis8.mobile",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "eas": {}
+      "eas": {
+        "projectId": "472eafd3-8533-484e-afae-da465000b2e0"
+      }
     },
     "plugins": [
       [
@@ -45,6 +51,7 @@
         }
       ],
       "expo-asset"
-    ]
+    ],
+    "owner": "najela_melvis"
   }
 }

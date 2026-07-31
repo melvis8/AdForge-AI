@@ -36,6 +36,8 @@ const openRouterGenerate = async (prompt: string): Promise<string> => {
     body: JSON.stringify({
       model: 'qwen/qwen-2.5-72b-instruct',
       messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4096,
+      temperature: 0.7,
     }),
   });
   if (!response.ok) throw new Error(`OpenRouter ${response.status}`);
@@ -57,18 +59,25 @@ export const geminiGenerate = async (prompt: string, retries = 3): Promise<strin
       lastError = e;
       const msg = e?.message || '';
       if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
-        console.log(`[Gemini] Rate limited (attempt ${attempt}/${retries}), waiting ${attempt * 15}s...`);
-        await sleep(attempt * 15000);
+        console.log(`[Gemini] Rate limited (attempt ${attempt}/${retries}), waiting ${attempt * 5}s...`);
+        await sleep(attempt * 5000);
         continue;
       }
       break;
     }
   }
-  try {
-    return await openRouterGenerate(prompt);
-  } catch {
-    throw lastError;
+
+  // Try OpenRouter with retries
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await openRouterGenerate(prompt);
+    } catch (e: any) {
+      console.log(`[OpenRouter] Failed (attempt ${attempt}/2): ${e?.message}`);
+      if (attempt < 2) await sleep(3000);
+    }
   }
+
+  throw lastError;
 };
 
 const generatePosterImage = async (title: string, description: string, campaignId: string): Promise<string> => {
