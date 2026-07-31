@@ -60,36 +60,6 @@ model Job {
   updatedAt   DateTime @updatedAt
 }
 
-model Asset {
-  id         String   @id @default(uuid())
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-  url        String
-  type       String   // image, logo, voice_input
-  createdAt  DateTime @default(now())
-}
-
-model GeneratedFile {
-  id         String   @id @default(uuid())
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-  url        String
-  type       String   // poster, video, voice, caption
-  content    String?  // for text like captions or suggestions
-  createdAt  DateTime @default(now())
-}
-
-model Job {
-  id         String   @id @default(uuid())
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-  taskType   String   // image_analysis, marketing_strategy, etc.
-  status     String   @default("pending") // pending, running, completed, failed
-  result     String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-}
-
 model OfflineTemplate {
   id          String   @id @default(uuid())
   category    String   // restaurant, fashion, beauty

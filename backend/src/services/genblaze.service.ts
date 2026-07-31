@@ -164,10 +164,10 @@ Each tip must be SPECIFIC with concrete numbers, platforms, timing, and budget. 
 
 const detectLanguage = async (text: string): Promise<string> => {
   const langHints: Record<string, RegExp> = {
-    fr: /\b(le|la|les|des|une|est|dans|pour|avec|sur|pas|que|qui|cette|nous|vous|sont|mais|tout|mon|ton|son|fait|peut|va|je|tu|il|elle|bonjour|merci|produit|marque|lancement|offre)\b/i,
+    fr: /\b(le|la|les|des|une|est|dans|pour|avec|sur|pas|que|qui|cette|nous|vous|sont|mais|tout|mon|ton|son|fait|peut|va|je|tu|il|elle|bonjour|merci|produit|marque|lancement|offre|s'il vous plaît)\b/i,
     es: /\b(el|la|los|las|un|una|es|en|por|con|para|no|que|como|pero|más|este|esta|muy|bueno|día|hola|gracias|producto|marca|lanzamiento|oferta)\b/i,
     de: /\b(der|die|das|ein|eine|ist|in|mit|auf|nicht|und|ich|du|er|sie|wir|ihr|sind|aber|kann|gut|morgen|danke|produkt|marke|angebot)\b/i,
-    pt: /\b(o|a|os|as|um|uma|é|em|com|para|não|que|como|mas|mais|este|esta|muito|bom|dia|olá|obrigado|produto|marca|lançamento|oferta)\b/i,
+    pt: /\b(os|as|um|uma|é|com|não|mas|mais|muito|bom|olá|obrigado|produto|marca|lançamento|oferta|você|está|fazer|também|porém|porque|então|quando|onde|qual)\b/i,
     ar: /[؟،]/u,
     zh: /[\u4e00-\u9fff]/,
     ja: /[\u3040-\u309f\u30a0-\u30ff]/,
