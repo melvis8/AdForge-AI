@@ -17,16 +17,12 @@ services:
           name: adforge-db
           property: connectionString
       - key: PORT
-        value: 3000
-      - key: JSON2VIDEO_API_KEY
-        sync: false
-      - key: ASSEMBLYAI_API_KEY
-        sync: false
+        value: 10000
       - key: GEMINI_API_KEY
         sync: false
-      - key: OPENAI_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
-      - key: FAL_API_KEY
+      - key: ASSEMBLYAI_API_KEY
         sync: false
       - key: B2_APP_KEY_ID
         sync: false
