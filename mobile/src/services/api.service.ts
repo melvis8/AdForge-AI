@@ -63,7 +63,9 @@ export const listCampaigns = async (): Promise<any[]> => {
   return res.json();
 };
 
-export const uploadAudio = async (uri: string): Promise<string> => {
+export const startGeneration = generateCampaign;
+
+export const uploadAudioForTranscription = async (uri: string): Promise<string> => {
   const formData = new FormData();
   formData.append('audio', {
     uri,
@@ -79,8 +81,6 @@ export const uploadAudio = async (uri: string): Promise<string> => {
   const data = await res.json();
   return data.text || '';
 };
-
-export const startGeneration = generateCampaign;
 
 export const uploadCampaignImages = async (campaignId: string, uris: string[]): Promise<any> => {
   const formData = new FormData();
