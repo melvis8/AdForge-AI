@@ -83,21 +83,27 @@ export const startRecording = async (): Promise<void> => {
     if (Platform.OS === 'web') {
       await startWebRecording();
     } else {
-      console.log('Requesting permissions..');
-      await Audio.requestPermissionsAsync();
+      console.log('[Speech] Requesting permissions...');
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm.granted) {
+        throw new Error('Microphone permission denied. Please enable it in Settings.');
+      }
+      console.log('[Speech] Setting audio mode...');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
-      console.log('Starting recording..');
+      console.log('[Speech] Starting recording...');
       const { recording: newRecording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
       recording = newRecording;
-      console.log('Recording started');
+      console.log('[Speech] Recording started, URI:', recording.getURI());
     }
   } catch (err) {
-    console.error('Failed to start recording', err);
+    recording = undefined;
+    console.error('[Speech] Failed to start recording', err);
+    throw err;
   }
 };
 
@@ -107,29 +113,32 @@ export const stopRecording = async (): Promise<string> => {
       return await stopWebRecording();
     }
 
-    if (!recording) return '';
+    if (!recording) return 'No recording active. Tap the mic to start.';
     
-    console.log('Stopping recording..');
+    console.log('[Speech] Stopping recording...');
     await recording.stopAndUnloadAsync();
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
     });
     const uri = recording.getURI();
-    console.log('Recording stopped and stored at', uri);
+    console.log('[Speech] Recording stopped, URI:', uri);
     recording = undefined;
     
     if (uri) {
       try {
+        console.log('[Speech] Uploading audio for transcription...');
         const transcribedText = await uploadAudioForTranscription(uri);
+        console.log('[Speech] Transcription result:', transcribedText?.substring(0, 100));
         return transcribedText || 'Could not transcribe the audio.';
       } catch (error) {
-        console.error('Transcription error:', error);
+        console.error('[Speech] Transcription error:', error);
         return 'Error transcribing audio. Please try typing instead.';
       }
     }
     return '';
   } catch (err) {
-    console.error('Failed to stop recording', err);
+    recording = undefined;
+    console.error('[Speech] Failed to stop recording', err);
     return 'Error with recording. Please try typing instead.';
   }
 };

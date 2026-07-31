@@ -23,14 +23,18 @@ export default function CampaignCreationScreen({ navigation }: Props) {
     if (isRecording) {
       setIsRecording(false);
       const text = await stopRecording();
-      if (text && !text.includes('Error transcribing')) {
+      if (text && !text.includes('Error') && !text.includes('No recording')) {
         setDescription(prev => prev ? `${prev} ${text}` : text);
       } else if (text) {
         Alert.alert('Speech Recognition', text);
       }
     } else {
-      setIsRecording(true);
-      await startRecording();
+      try {
+        await startRecording();
+        setIsRecording(true);
+      } catch (err: any) {
+        Alert.alert('Microphone Error', err.message || 'Could not start recording. Check microphone permissions.');
+      }
     }
   };
 

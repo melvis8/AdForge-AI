@@ -77,19 +77,33 @@ export const startGeneration = generateCampaign;
 
 export const uploadAudioForTranscription = async (uri: string): Promise<string> => {
   const formData = new FormData();
+  const isIOS = Platform.OS === 'ios';
   formData.append('audio', {
     uri,
-    type: 'audio/m4a',
-    name: 'recording.m4a',
+    type: isIOS ? 'audio/m4a' : 'audio/x-caf',
+    name: isIOS ? 'recording.m4a' : 'recording.caf',
   } as any);
 
-  const res = await fetchWithTimeout(`${API_URL}/transcribe`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
-  const data = await res.json();
-  return data.text || '';
+  // Transcription needs longer timeout (AssemblyAI + Render cold start)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90000);
+  try {
+    const res = await fetch(`${API_URL}/transcribe`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
+    const data = await res.json();
+    return data.text || '';
+  } catch (e: any) {
+    clearTimeout(timeout);
+    if (e.name === 'AbortError') {
+      throw new Error('Transcription timed out. Please try typing instead.');
+    }
+    throw e;
+  }
 };
 
 export const uploadCampaignImages = async (campaignId: string, uris: string[]): Promise<any> => {
