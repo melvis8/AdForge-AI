@@ -1,8 +1,9 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import ffmpegPath from 'ffmpeg-static';
+import { downloadFromB2 } from './storage.service';
 
 interface VideoResult {
   url: string;
@@ -23,40 +24,40 @@ export const createPromotionalVideo = async (
   const outputVideo = path.join(tmpDir, 'output.mp4');
 
   try {
-    // Download poster
+    // Download poster — try B2 auth first, then direct fetch
     console.log('[Video] Downloading poster...');
-    const response = await fetch(posterUrl);
-    if (!response.ok) throw new Error(`Poster download failed: ${response.status}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
+    let buffer: Buffer;
+    if (posterUrl.includes('backblazeb2.com')) {
+      buffer = await downloadFromB2(posterUrl);
+    } else {
+      const response = await fetch(posterUrl);
+      if (!response.ok) throw new Error(`Poster download failed: ${response.status}`);
+      buffer = Buffer.from(await response.arrayBuffer());
+    }
     fs.writeFileSync(inputImage, buffer);
     console.log(`[Video] Poster: ${buffer.length} bytes`);
 
-    // Ken Burns effect: 10s zoom + pan with title overlay
+    // Ken Burns effect: 10s zoom + pan
     const duration = 10;
     const fps = 30;
     const totalFrames = duration * fps;
-    const escapeText = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:').replace(/%/g, '%%').replace(/\n/g, ' ');
-    const escapedTitle = escapeText(title.substring(0, 50));
-    const escapedDesc = escapeText(description.substring(0, 60));
-
-    const cmd = [
-      `"${ffmpegPath}" -y`,
-      `-loop 1 -i "${inputImage}"`,
-      '-vf',
-      `scale=1920:1920:force_original_aspect_ratio=increase,crop=1920:1920,` +
-      `zoompan=z='min(zoom+0.001,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1080x1080:fps=${fps},` +
-      `drawtext=text='${escapedTitle}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=h-120:shadowcolor=black@0.8:shadowx=2:shadowy=2,` +
-      `drawtext=text='${escapedDesc}':fontcolor=white@0.8:fontsize=28:x=(w-text_w)/2:y=h-60:shadowcolor=black@0.6:shadowx=1:shadowy=1`,
-      '-c:v libx264',
-      '-t', String(duration),
-      '-pix_fmt yuv420p',
-      '-preset fast',
-      '-crf 23',
-      `"${outputVideo}"`,
-    ].join(' ');
+    const vf = [
+      'scale=1920:1920:force_original_aspect_ratio=increase,crop=1920:1920',
+      `zoompan=z='min(zoom+0.001,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1080x1080:fps=${fps}`,
+    ].join(',');
 
     console.log('[Video] Generating...');
-    execSync(cmd, { timeout: 120000, stdio: 'pipe', maxBuffer: 50 * 1024 * 1024 });
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-loop', '1', '-i', inputImage,
+      '-vf', vf,
+      '-c:v', 'libx264',
+      '-t', String(duration),
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'fast',
+      '-crf', '23',
+      outputVideo,
+    ], { timeout: 120000, stdio: 'pipe', maxBuffer: 50 * 1024 * 1024 });
 
     const stats = fs.statSync(outputVideo);
     console.log(`[Video] Created: ${stats.size} bytes`);

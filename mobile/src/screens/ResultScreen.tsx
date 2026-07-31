@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { getCampaign } from '../services/api.service';
+import { getCampaign, resolveFileUrl } from '../services/api.service';
 import { saveCampaignOffline, getOfflineCampaignById } from '../services/offline.service';
 import { Video, ResizeMode } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
@@ -188,13 +188,13 @@ export default function ResultScreen({ route, navigation }: Props) {
       }
 
       const urlMap: Record<string, string> = {
-        poster: campaignData.poster,
-        video: campaignData.video,
+        poster: resolveFileUrl(campaignData.poster),
+        video: resolveFileUrl(campaignData.video),
       };
 
       let mediaUrl = urlMap[mediaType];
       if (mediaType === 'all') {
-        mediaUrl = campaignData.video || campaignData.poster;
+        mediaUrl = resolveFileUrl(campaignData.video) || resolveFileUrl(campaignData.poster);
       }
 
       if (!mediaUrl) {
@@ -237,7 +237,7 @@ export default function ResultScreen({ route, navigation }: Props) {
       }
 
       // Download the media file first
-      const mediaUrl = campaignData.video || campaignData.poster;
+      const mediaUrl = resolveFileUrl(campaignData.video) || resolveFileUrl(campaignData.poster);
       const fileUri = await downloadMedia(mediaUrl, `adforge_share_${campaignData.id}`);
       
       if (!fileUri) {
@@ -301,8 +301,8 @@ export default function ResultScreen({ route, navigation }: Props) {
     ? campaignData.strategy.split('\n').filter((s: string) => s.trim().length > 0)
     : [];
 
-  const finalVideoUrl = campaignData.video || '';
-  const finalPosterUrl = campaignData.poster || PLACEHOLDER_IMAGE;
+  const finalVideoUrl = resolveFileUrl(campaignData.video || '');
+  const finalPosterUrl = resolveFileUrl(campaignData.poster || PLACEHOLDER_IMAGE);
 
   const horizontalPad = isTablet ? 48 : 24;
 

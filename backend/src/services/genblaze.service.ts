@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { createPromotionalVideo } from './video.service';
-import { uploadFromUrl, uploadBuffer } from './storage.service';
+import { uploadFromUrl, uploadBuffer, downloadFromB2 } from './storage.service';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 import dotenv from 'dotenv';
@@ -163,36 +163,52 @@ Each tip must be SPECIFIC with concrete numbers, platforms, timing, and budget. 
 };
 
 const detectLanguage = async (text: string): Promise<string> => {
-  const langHints: Record<string, RegExp> = {
-    fr: /\b(le|la|les|des|une|est|dans|pour|avec|sur|pas|que|qui|cette|nous|vous|sont|mais|tout|mon|ton|son|fait|peut|va|je|tu|il|elle|bonjour|merci|produit|marque|lancement|offre|s'il vous plaît)\b/i,
-    es: /\b(el|la|los|las|un|una|es|en|por|con|para|no|que|como|pero|más|este|esta|muy|bueno|día|hola|gracias|producto|marca|lanzamiento|oferta)\b/i,
-    de: /\b(der|die|das|ein|eine|ist|in|mit|auf|nicht|und|ich|du|er|sie|wir|ihr|sind|aber|kann|gut|morgen|danke|produkt|marke|angebot)\b/i,
-    pt: /\b(os|as|um|uma|é|com|não|mas|mais|muito|bom|olá|obrigado|produto|marca|lançamento|oferta|você|está|fazer|também|porém|porque|então|quando|onde|qual)\b/i,
-    ar: /[؟،]/u,
-    zh: /[\u4e00-\u9fff]/,
-    ja: /[\u3040-\u309f\u30a0-\u30ff]/,
-    ko: /[\uac00-\ud7af]/,
-    ha: /\b(sunan|kuma|na|ne|da|wa|ba|ta|ka|ga|ya|am|ai|ni|shi|fi|ko|mi)\b/i,
+  const lower = text.toLowerCase();
+
+  // ONLY distinctive words — words that are unambiguously one language
+  // No shared words between languages (e.g. "produit" removed because it's similar in FR/PT)
+  const langDistinctive: Record<string, RegExp> = {
+    fr: /\b(bonjour|merci|s'il vous plaît|beauté|cosmétique|soin|crème|sérum|visage|peau|cheveux|corps|bien-être|alimentation|naturel|café|hôtel|voyage|vêtement|jardin|nouveau|nouvelle|excellent|meilleur|spécial|c'est|très|je|nous|vous|ils|elles|mon|ton|son|fait|peut|elle|leur|quel|quelle|aujourd'hui|maintenant)\b/i,
+    es: /\b(hola|gracias|por favor|belleza|cosmético|cuidado|crema|serum|rostro|piel|cabello|cuerpo|salud|bienestar|alimentación|restaurante|viaje|moda|ropa|jardín|niño|nuevo|nueva|excelente|mejor|también|puede|tiene|hace|desde|hasta|está|ser|hay|más|pero|como|este|esta|eso)\b/i,
+    de: /\b(schönheit|kosmetik|pflege|gesicht|haare|körper|gesundheit|wohlbefinden|ernaehrung|kaffee|reise|kleidung|haus|garten|tiere|danke|bitte|guten|morgen|abend|exzellent|besten|könnte|sollte|muss|wird|hat|war|nicht|und|ich|du|er|sie|wir|ihr|sind|aber|kann)\b/i,
+    pt: /\b(obrigado|obrigada|beleza|cosmético|cuidado|soro|rosto|pele|cabelo|saúde|bem-estar|viagem|roupa|criança|lançamento|novo|nova|excelente|melhor|também|porém|porque|então|quando|onde|qual|muito|mais|não|você|está|fazer|pode|tem)\b/i,
   };
 
-  for (const [lang, regex] of Object.entries(langHints)) {
-    if (regex.test(text)) {
-      console.log(`[Lang] Detected by heuristic: ${lang}`);
-      return lang;
+  let bestLang = '';
+  let bestScore = 0;
+
+  for (const [lang, pattern] of Object.entries(langDistinctive)) {
+    const matches = lower.match(new RegExp(pattern.source, 'gi'));
+    const score = matches ? matches.length : 0;
+    if (score >= 2 && score > bestScore) {
+      bestScore = score;
+      bestLang = lang;
     }
   }
 
+  if (bestLang) {
+    console.log(`[Lang] Heuristic: ${bestLang} (${bestScore} matches)`);
+    return bestLang;
+  }
+
+  // Non-Latin scripts
+  if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
+  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) return 'ja';
+  if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+  if (/[؟،]/.test(text)) return 'ar';
+
+  // Fallback to Gemini
   try {
     const rawResponse = await geminiGenerate(
       `What language is this text? Reply with ONLY the 2-letter ISO 639-1 code.\n\nText: "${text.substring(0, 300)}"`,
     );
     const code = rawResponse.toLowerCase().replace(/[^a-z]/g, '').substring(0, 2);
     if (code && code.length === 2) {
-      console.log(`[Lang] Detected by Gemini: ${code}`);
+      console.log(`[Lang] Gemini: ${code}`);
       return code;
     }
   } catch (e) {
-    console.error('[Lang] Gemini detection failed:', e);
+    console.error('[Lang] Gemini failed:', e);
   }
 
   return 'en';
@@ -298,12 +314,26 @@ const generateVideoInBackground = async (
 ) => {
   console.log(`[Video] Starting background video for ${campaignId}...`);
   try {
-    const videoResult = await createPromotionalVideo(title, description, posterUrl);
+    // posterUrl may be a proxy URL (/api/files/...) — convert to raw B2 URL for video service
+    let rawPosterUrl = posterUrl;
+    if (posterUrl.startsWith('/api/files/')) {
+      const fileName = posterUrl.replace('/api/files/', '');
+      rawPosterUrl = `https://f005.backblazeb2.com/file/${process.env.B2_BUCKET_NAME}/${fileName}`;
+    }
+
+    const videoResult = await createPromotionalVideo(title, description, rawPosterUrl);
     if (videoResult?.url && videoResult.url.startsWith('/')) {
       const buffer = fs.readFileSync(videoResult.url);
-      const videoUrl = await uploadBuffer(buffer, `campaigns/${campaignId}/video_${Date.now()}.mp4`, 'video/mp4');
-      await prisma.generatedFile.create({ data: { campaignId, url: videoUrl, type: 'video' } });
-      console.log(`[Video] Uploaded to B2: ${videoUrl.substring(0, 80)}...`);
+      try {
+        const videoUrl = await uploadBuffer(buffer, `campaigns/${campaignId}/video_${Date.now()}.mp4`, 'video/mp4');
+        await prisma.generatedFile.create({ data: { campaignId, url: videoUrl, type: 'video' } });
+        console.log(`[Video] Uploaded to B2: ${videoUrl}`);
+      } catch (uploadErr) {
+        console.error('[Video] B2 upload failed, serving video from backend:', (uploadErr as Error).message);
+        const localUrl = `http://localhost:4000/api/campaigns/${campaignId}/video`;
+        await prisma.generatedFile.create({ data: { campaignId, url: localUrl, type: 'video' } });
+        console.log(`[Video] Saved as local fallback: ${localUrl}`);
+      }
       try { fs.unlinkSync(videoResult.url); } catch {}
     }
   } catch (e: any) {

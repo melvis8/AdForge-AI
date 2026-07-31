@@ -8,7 +8,17 @@ const LOCAL_URL = `http://${LOCAL_IP}:4000/api`;
 const PRODUCTION_URL = 'https://adforge-api-hday.onrender.com/api';
 
 const API_URL = IS_DEV ? LOCAL_URL : PRODUCTION_URL;
+const API_BASE = API_URL.replace(/\/api$/, '');
 console.log(`[API] Mode: ${IS_DEV ? 'DEV' : 'PROD'} → ${API_URL}`);
+
+/**
+ * Resolve a file URL — proxy paths (/api/files/...) get full base URL prepended
+ */
+export const resolveFileUrl = (url: string): string => {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  return `${API_BASE}${url}`;
+};
 
 const REQUEST_TIMEOUT = 30000;
 

@@ -7,6 +7,7 @@ import {
   getOfflineTemplates,
   transcribeAudio
 } from '../controllers/campaign.controller';
+import { downloadB2File } from '../controllers/b2-proxy.controller';
 import multer from 'multer';
 
 const router = Router();
@@ -16,6 +17,9 @@ const upload = multer({ dest: 'uploads/' });
 router.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// B2 file proxy — streams private B2 files through backend auth
+router.get('/files/{*fileName}', downloadB2File);
 
 // Create campaign
 router.post('/campaigns', createCampaign);

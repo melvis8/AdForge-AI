@@ -12,18 +12,28 @@ const b2 = new B2({
 
 let isB2Authorized = false;
 let b2DownloadUrl = '';
+let b2AuthToken = '';
+
+const isPlaceholder = (val: string) => !val || val.startsWith('your_') || val === '';
 
 const authorizeB2 = async () => {
   if (isB2Authorized) return;
   try {
-    if (process.env.B2_APP_KEY_ID) {
-      const authResponse = await b2.authorize();
-      b2DownloadUrl = authResponse.data.downloadUrl;
-      isB2Authorized = true;
-      console.log('[B2] Authorized successfully. Download URL:', b2DownloadUrl);
-    } else {
-      console.warn('[B2] Credentials missing. Storage service will pass-through source URLs directly.');
+    const keyId = process.env.B2_APP_KEY_ID || '';
+    const key = process.env.B2_APP_KEY || '';
+    const bucketId = process.env.B2_BUCKET_ID || '';
+
+    if (isPlaceholder(keyId) || isPlaceholder(key) || isPlaceholder(bucketId)) {
+      console.error('[B2] CRITICAL: Credentials are placeholders! Images will NOT be stored in B2.');
+      console.error('[B2] Set real values in .env: B2_APP_KEY_ID, B2_APP_KEY, B2_BUCKET_ID');
+      return;
     }
+
+    const authResponse = await b2.authorize();
+    b2DownloadUrl = authResponse.data.downloadUrl;
+    b2AuthToken = authResponse.data.authorizationToken;
+    isB2Authorized = true;
+    console.log('[B2] Authorized successfully. Download URL:', b2DownloadUrl);
   } catch (error) {
     console.error('[B2] Authorization failed:', error);
   }
@@ -63,7 +73,7 @@ export const uploadFile = async (filePath: string, fileName: string): Promise<st
 
 /**
  * Upload a Buffer directly to Backblaze B2 (for generated images/videos)
- * Returns the B2 URL on success, or throws on failure so callers can use fallbacks.
+ * Returns the proxy URL (for app consumption) on success, or throws on failure.
  */
 export const uploadBuffer = async (buffer: Buffer, fileName: string, mimeType: string = 'b2/x-auto'): Promise<string> => {
   await authorizeB2();
@@ -85,13 +95,21 @@ export const uploadBuffer = async (buffer: Buffer, fileName: string, mimeType: s
       mime: mimeType,
     });
 
-    const downloadUrl = `${b2DownloadUrl}/file/${process.env.B2_BUCKET_NAME}/${fileName}`;
-    console.log(`[B2] Buffer uploaded: ${downloadUrl}`);
-    return downloadUrl;
+    const b2Url = `${b2DownloadUrl}/file/${process.env.B2_BUCKET_NAME}/${fileName}`;
+    const proxyUrl = `/api/files/${fileName}`;
+    console.log(`[B2] Uploaded: ${b2Url} → proxy: ${proxyUrl}`);
+    return proxyUrl;
   } catch (error) {
     console.error('[B2] Buffer upload failed:', error);
     throw error;
   }
+};
+
+/**
+ * Get the raw B2 URL for a file (used internally for downloads)
+ */
+export const getB2Url = (fileName: string): string => {
+  return `${b2DownloadUrl}/file/${process.env.B2_BUCKET_NAME}/${fileName}`;
 };
 
 /**
@@ -116,10 +134,9 @@ export const uploadFromUrl = async (sourceUrl: string, fileName: string): Promis
     const buffer = Buffer.from(arrayBuffer);
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
 
-    // If B2 is not authorized, return the source URL directly (it's a real working URL)
+    // If B2 is not authorized, throw so caller knows the file is NOT in B2
     if (!isB2Authorized) {
-      console.log('[B2] Not authorized, returning source URL directly');
-      return sourceUrl;
+      throw new Error('B2 not authorized - image will not be stored in B2 bucket');
     }
     
     return await uploadBuffer(buffer, fileName, contentType);
@@ -129,4 +146,25 @@ export const uploadFromUrl = async (sourceUrl: string, fileName: string): Promis
     console.log('[B2] Falling back to source URL');
     return sourceUrl;
   }
+};
+
+/**
+ * Download a file from B2 using authenticated request.
+ * Returns a Buffer for use by callers (e.g. video generation from poster).
+ */
+export const downloadFromB2 = async (b2Url: string): Promise<Buffer> => {
+  await authorizeB2();
+
+  if (!isB2Authorized) {
+    throw new Error('B2 not authorized - cannot download');
+  }
+
+  const response = await fetch(b2Url, {
+    headers: { Authorization: b2AuthToken },
+  });
+  if (!response.ok) throw new Error(`B2 download failed: ${response.status}`);
+
+  const arrayBuffer = await response.arrayBuffer();
+  console.log(`[B2] Downloaded: ${arrayBuffer.byteLength} bytes`);
+  return Buffer.from(arrayBuffer);
 };
