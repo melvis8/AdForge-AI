@@ -22,11 +22,41 @@ model Campaign {
   description String?
   status      String   @default("draft") // draft, generating, completed, failed
   userId      String?
-  user        User?    @relation(fields: [userId], references: [id])
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   assets      Asset[]
   jobs        Job[]
   generated   GeneratedFile[]
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Asset {
+  id         String   @id @default(uuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  url        String
+  type       String   // image, logo, voice_input
+  createdAt  DateTime @default(now())
+}
+
+model GeneratedFile {
+  id         String   @id @default(uuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  url        String
+  type       String   // poster, video, voice, caption, strategy
+  content    String?
+  createdAt  DateTime @default(now())
+}
+
+model Job {
+  id         String   @id @default(uuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  taskType   String
+  status     String   @default("pending")
+  result     String?
+  createdAt  DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 

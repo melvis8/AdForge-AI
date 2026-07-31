@@ -9,51 +9,37 @@ interface VideoResult {
   projectId: string;
 }
 
-/**
- * Creates a promotional video from the poster image using ffmpeg-static.
- * Produces a 10-second Ken Burns effect video with the campaign title overlay.
- * Uses the ffmpeg binary bundled via npm (no system install needed).
- */
 export const createPromotionalVideo = async (
   title: string,
   description: string,
-  posterUrl?: string,
-  language: string = 'en'
+  posterUrl: string
 ): Promise<VideoResult> => {
-  if (!posterUrl) {
-    throw new Error('No poster URL provided for video generation');
-  }
+  if (!posterUrl) throw new Error('No poster URL for video generation');
+  if (!ffmpegPath) throw new Error('ffmpeg-static binary not found');
 
-  if (!ffmpegPath) {
-    throw new Error('ffmpeg-static binary not found');
-  }
-
-  console.log(`[Video] Using ffmpeg at: ${ffmpegPath}`);
-
+  console.log(`[Video] ffmpeg at: ${ffmpegPath}`);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adforge-video-'));
   const inputImage = path.join(tmpDir, 'input.jpg');
   const outputVideo = path.join(tmpDir, 'output.mp4');
 
   try {
-    // Download the poster image
-    console.log('[Video] Downloading poster image...');
+    // Download poster
+    console.log('[Video] Downloading poster...');
     const response = await fetch(posterUrl);
-    if (!response.ok) throw new Error(`Failed to download poster: ${response.status}`);
+    if (!response.ok) throw new Error(`Poster download failed: ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
     fs.writeFileSync(inputImage, buffer);
-    console.log(`[Video] Poster downloaded (${buffer.length} bytes)`);
+    console.log(`[Video] Poster: ${buffer.length} bytes`);
 
-    // Create a Ken Burns effect video: slow zoom + pan with title overlay
+    // Ken Burns effect: 10s zoom + pan with title overlay
     const duration = 10;
     const fps = 30;
     const totalFrames = duration * fps;
-
-    // Escape special characters in the title for ffmpeg drawtext
     const escapeText = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:').replace(/%/g, '%%').replace(/\n/g, ' ');
     const escapedTitle = escapeText(title.substring(0, 50));
     const escapedDesc = escapeText(description.substring(0, 60));
 
-    const ffmpegCmd = [
+    const cmd = [
       `"${ffmpegPath}" -y`,
       `-loop 1 -i "${inputImage}"`,
       '-vf',
@@ -69,25 +55,24 @@ export const createPromotionalVideo = async (
       `"${outputVideo}"`,
     ].join(' ');
 
-    console.log('[Video] Generating video with ffmpeg-static...');
-    execSync(ffmpegCmd, {
-      timeout: 120000,
-      stdio: 'pipe',
-      maxBuffer: 50 * 1024 * 1024,
-    });
+    console.log('[Video] Generating...');
+    execSync(cmd, { timeout: 120000, stdio: 'pipe', maxBuffer: 50 * 1024 * 1024 });
 
-    // Verify the video was created
     const stats = fs.statSync(outputVideo);
-    console.log(`[Video] Video created: ${stats.size} bytes`);
+    console.log(`[Video] Created: ${stats.size} bytes`);
+    if (stats.size < 1000) throw new Error('Video too small');
 
-    if (stats.size < 1000) {
-      throw new Error('Video file too small, likely corrupt');
-    }
+    // Clean up input
+    try { fs.unlinkSync(inputImage); } catch {}
+    try { fs.rmdirSync(tmpDir); } catch {}
 
     return { url: outputVideo, projectId: 'ffmpeg-static' };
-
   } catch (e: any) {
-    console.error('[Video] Generation failed:', e?.message || e);
+    // Clean up on failure
+    try { fs.unlinkSync(inputImage); } catch {}
+    try { fs.unlinkSync(outputVideo); } catch {}
+    try { fs.rmdirSync(tmpDir); } catch {}
+    console.error('[Video] Failed:', e?.message || e);
     throw e;
   }
 };

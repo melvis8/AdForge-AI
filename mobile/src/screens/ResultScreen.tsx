@@ -59,18 +59,19 @@ export default function ResultScreen({ route, navigation }: Props) {
           if (data && data.generated) {
             const poster = data.generated.find((f: any) => f.type === 'poster')?.url || offlineData.poster || '';
             const video = data.generated.find((f: any) => f.type === 'video')?.url || offlineData.video || '';
-            const captionObj = data.generated.find((f: any) => f.type === 'caption' && !f.content?.startsWith('STRATEGY:'));
-            const strategyObj = data.generated.find((f: any) => f.content?.startsWith('STRATEGY:'));
-            
-            setCampaignData({
-              id: data.id,
-              title: data.title || offlineData.title,
-              description: data.description || offlineData.description || '',
-              poster,
-              video,
-              caption: captionObj?.content || offlineData.caption || '',
-              strategy: strategyObj?.content?.replace('STRATEGY:', '') || offlineData.strategy || '',
-            });
+          const strategyObj = data.generated.find((f: any) => f.type === 'strategy');
+          const captionObj = data.generated.find((f: any) => f.type === 'caption');
+          const captionFromStrategyHack = !strategyObj ? data.generated.find((f: any) => f.content?.startsWith('STRATEGY:')) : null;
+          
+          setCampaignData({
+            id: data.id,
+            title: data.title || offlineData.title,
+            description: data.description || offlineData.description || '',
+            poster,
+            video,
+            caption: captionObj?.content || offlineData.caption || '',
+            strategy: strategyObj?.content || captionFromStrategyHack?.content?.replace('STRATEGY:', '') || offlineData.strategy || '',
+          });
           }
         } catch {
           // Offline data is fine, don't show error
@@ -85,8 +86,9 @@ export default function ResultScreen({ route, navigation }: Props) {
         if (data && data.generated) {
           const poster = data.generated.find((f: any) => f.type === 'poster')?.url || '';
           const video = data.generated.find((f: any) => f.type === 'video')?.url || '';
-          const captionObj = data.generated.find((f: any) => f.type === 'caption' && !f.content?.startsWith('STRATEGY:'));
-          const strategyObj = data.generated.find((f: any) => f.content?.startsWith('STRATEGY:'));
+          const strategyObj = data.generated.find((f: any) => f.type === 'strategy');
+          const captionObj = data.generated.find((f: any) => f.type === 'caption');
+          const captionFromStrategyHack = !strategyObj ? data.generated.find((f: any) => f.content?.startsWith('STRATEGY:')) : null;
           
           const result: CampaignData = {
             id: data.id,
@@ -95,7 +97,7 @@ export default function ResultScreen({ route, navigation }: Props) {
             poster,
             video,
             caption: captionObj?.content || '',
-            strategy: strategyObj?.content?.replace('STRATEGY:', '') || '',
+            strategy: strategyObj?.content || captionFromStrategyHack?.content?.replace('STRATEGY:', '') || '',
           };
           setCampaignData(result);
 
@@ -107,7 +109,7 @@ export default function ResultScreen({ route, navigation }: Props) {
             poster,
             video,
             caption: captionObj?.content || '',
-            strategy: strategyObj?.content?.replace('STRATEGY:', '') || '',
+            strategy: strategyObj?.content || captionFromStrategyHack?.content?.replace('STRATEGY:', '') || '',
             createdAt: data.createdAt || new Date().toISOString(),
           });
         }
@@ -143,10 +145,17 @@ export default function ResultScreen({ route, navigation }: Props) {
   const copyCaption = async () => {
     if (!campaignData?.caption) return;
     try {
-      await navigator.clipboard?.writeText(campaignData.caption);
+      // Try Clipboard API (web) first, then fallback
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(campaignData.caption);
+      } else {
+        // For native: show in alert so user can copy manually
+        Alert.alert('Caption', campaignData.caption);
+        return;
+      }
       Alert.alert('Copied', 'Caption copied to clipboard!');
     } catch {
-      Alert.alert('Copy', campaignData.caption);
+      Alert.alert('Caption', campaignData.caption);
     }
   };
 

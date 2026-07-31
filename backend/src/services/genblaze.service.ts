@@ -2,15 +2,16 @@ import { PrismaClient } from '@prisma/client';
 import { createPromotionalVideo } from './video.service';
 import { uploadFromUrl, uploadBuffer } from './storage.service';
 import { GoogleGenAI } from '@google/genai';
+import fs from 'fs';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const prisma = new PrismaClient();
 const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 
 const GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 const LANG_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
@@ -21,58 +22,149 @@ const LANG_NAMES: Record<string, string> = {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const geminiGenerate = async (prompt: string, model: string = GEMINI_MODEL, retries = 3): Promise<string> => {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const response = await gemini.models.generateContent({ model, contents: prompt });
-      return response.text?.trim() || '';
-    } catch (e: any) {
-      const msg = e?.message || '';
-      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
-        const delay = attempt * 15000;
-        console.log(`[Gemini] Rate limited (attempt ${attempt}/${retries}), waiting ${delay / 1000}s...`);
-        await sleep(delay);
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error('Gemini rate limit exceeded after retries');
+const openRouterGenerate = async (prompt: string): Promise<string> => {
+  if (!OPENROUTER_KEY) throw new Error('No OpenRouter key');
+  console.log('[OpenRouter] Generating with fallback...');
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_KEY}`,
+      'HTTP-Referer': 'https://adforge.ai',
+      'X-Title': 'AdForge AI',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'qwen/qwen-2.5-72b-instruct',
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!response.ok) throw new Error(`OpenRouter ${response.status}`);
+  const data = (await response.json()) as any;
+  return data.choices?.[0]?.message?.content?.trim() || '';
 };
 
-const geminiGenerateImage = async (prompt: string, retries = 3): Promise<Buffer | null> => {
+export const geminiGenerate = async (prompt: string, retries = 3): Promise<string> => {
+  let lastError: any = null;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const response = await gemini.models.generateContent({
-        model: GEMINI_IMAGE_MODEL,
+        model: GEMINI_MODEL,
         contents: prompt,
-        config: { responseModalities: ['TEXT', 'IMAGE'] },
       });
-      const parts = response.candidates?.[0]?.content?.parts || [];
-      for (const part of parts) {
-        if (part.inlineData?.data) {
-          return Buffer.from(part.inlineData.data, 'base64');
-        }
-      }
-      return null;
+      const text = (response as any).text;
+      return (typeof text === 'function' ? text() : text || '').trim();
     } catch (e: any) {
+      lastError = e;
       const msg = e?.message || '';
       if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
-        const delay = attempt * 15000;
-        console.log(`[Gemini] Image rate limited (attempt ${attempt}/${retries}), waiting ${delay / 1000}s...`);
-        await sleep(delay);
+        console.log(`[Gemini] Rate limited (attempt ${attempt}/${retries}), waiting ${attempt * 15}s...`);
+        await sleep(attempt * 15000);
         continue;
       }
-      throw e;
+      break;
     }
   }
-  return null;
+  try {
+    return await openRouterGenerate(prompt);
+  } catch {
+    throw lastError;
+  }
+};
+
+const generatePosterImage = async (title: string, description: string, campaignId: string): Promise<string> => {
+  console.log('[Image] Generating with Gemini...');
+
+  // Try Gemini native image generation first
+  try {
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.5-flash-preview-image-generation',
+      contents: `Generate a professional marketing poster image for: "${title}". ${description.substring(0, 400)}. Vibrant colors, modern design, no text in the image.`,
+      config: { responseModalities: ['TEXT', 'IMAGE'] },
+    });
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        const buf = Buffer.from(part.inlineData.data, 'base64');
+        console.log(`[Image] Gemini generated ${buf.length} bytes`);
+        const b2Url = await uploadBuffer(buf, `campaigns/${campaignId}/poster_${Date.now()}.jpg`, 'image/jpeg');
+        return b2Url;
+      }
+    }
+  } catch (e: any) {
+    console.log('[Image] Gemini image failed, using Pollinations:', e?.message?.substring(0, 80));
+  }
+
+  // Fallback: Pollinations.ai (free, no API key)
+  console.log('[Image] Using Pollinations.ai (free)...');
+  const visualPrompt = `Professional marketing poster for ${title}. ${description.substring(0, 200)}. Vibrant colors, modern design, studio lighting, high quality, no text.`;
+  const encodedPrompt = encodeURIComponent(visualPrompt);
+  const seed = Math.floor(Math.random() * 999999);
+  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${seed}&enhance=true`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  const response = await fetch(pollinationsUrl, { signal: controller.signal });
+  clearTimeout(timeout);
+
+  if (!response.ok) throw new Error(`Pollinations returned ${response.status}`);
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  console.log(`[Image] Pollinations: ${buffer.length} bytes`);
+  if (buffer.length < 1000) throw new Error('Image too small');
+
+  try {
+    const b2Url = await uploadBuffer(buffer, `campaigns/${campaignId}/poster_${Date.now()}.jpg`, 'image/jpeg');
+    console.log(`[Image] Saved to B2: ${b2Url}`);
+    return b2Url;
+  } catch {
+    return pollinationsUrl;
+  }
+};
+
+const generateCaption = async (title: string, description: string, language: string): Promise<string> => {
+  const langName = LANG_NAMES[language] || 'English';
+  const caption = await geminiGenerate(`CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write a single word in any other language.
+
+You are the world's #1 social media copywriter. Write captions that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy.
+
+Write a POWERFUL, LONG-FORM social media caption (500-800 words) entirely in ${langName} for this campaign:
+
+CAMPAIGN TITLE: "${title}"
+PRODUCT/SERVICE DETAILS: ${description}
+
+Structure (ALL IN ${langName}):
+1. HOOK - First line that stops the scroll
+2. STORY - 2-3 paragraphs about the product/service
+3. DETAILS - Features, ingredients, prices, discounts
+4. BENEFITS - How this changes the customer's life
+5. SOCIAL PROOF - Quality, trust
+6. URGENCY - Limited time, exclusive deal
+7. CTA - Clear call to action
+8. HASHTAGS - 5-8 relevant hashtags
+
+RULES: MINIMUM 500 words. EVERYTHING in ${langName}. Use emojis. Reference specific details. Include numbers/percentages. Do NOT switch languages.`);
+  console.log(`[Caption] ${caption.split(' ').length} words (${language})`);
+  return caption;
+};
+
+const generateStrategy = async (title: string, description: string, language: string): Promise<string> => {
+  const langName = LANG_NAMES[language] || 'English';
+  const result = await geminiGenerate(`CRITICAL: Write ENTIRE response in ${langName}. You are a world-class marketing strategist.
+
+Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips in ${langName} for:
+
+TITLE: "${title}"
+DESCRIPTION: ${description.substring(0, 500)}
+
+Each tip must be SPECIFIC with concrete numbers, platforms, timing, and budget. Format as numbered list (1-3). Write EVERYTHING in ${langName}.`);
+  console.log(`[Strategy] ${result.split(' ').length} words (${language})`);
+  return result;
 };
 
 const detectLanguage = async (text: string): Promise<string> => {
-  // First, try simple heuristic detection
   const langHints: Record<string, RegExp> = {
-    fr: /\b(le|la|les|des|une|est|dans|pour|avec|sur|pas|que|qui|cette|nous|vous|sont|mais|tout|mon|ton|son|fait|peut|va|je|tu|il|elle|nous|vous|ils|elles|bonjour|merci|s'il vous plaît|produit|marque|lancement|offre)\b/i,
+    fr: /\b(le|la|les|des|une|est|dans|pour|avec|sur|pas|que|qui|cette|nous|vous|sont|mais|tout|mon|ton|son|fait|peut|va|je|tu|il|elle|bonjour|merci|produit|marque|lancement|offre)\b/i,
     es: /\b(el|la|los|las|un|una|es|en|por|con|para|no|que|como|pero|más|este|esta|muy|bueno|día|hola|gracias|producto|marca|lanzamiento|oferta)\b/i,
     de: /\b(der|die|das|ein|eine|ist|in|mit|auf|nicht|und|ich|du|er|sie|wir|ihr|sind|aber|kann|gut|morgen|danke|produkt|marke|angebot)\b/i,
     pt: /\b(o|a|os|as|um|uma|é|em|com|para|não|que|como|mas|mais|este|esta|muito|bom|dia|olá|obrigado|produto|marca|lançamento|oferta)\b/i,
@@ -80,348 +172,141 @@ const detectLanguage = async (text: string): Promise<string> => {
     zh: /[\u4e00-\u9fff]/,
     ja: /[\u3040-\u309f\u30a0-\u30ff]/,
     ko: /[\uac00-\ud7af]/,
-    ha: /\b(na|ne|da|wa|ba|ta|ka|ga|ya|am|ai|ni|shi|fi|ko|mi|sunan|kuma| Product| brand| offer)\b/i,
+    ha: /\b(sunan|kuma|na|ne|da|wa|ba|ta|ka|ga|ya|am|ai|ni|shi|fi|ko|mi)\b/i,
   };
 
   for (const [lang, regex] of Object.entries(langHints)) {
     if (regex.test(text)) {
-      console.log(`[Genblaze] Language detected by heuristic: ${lang}`);
+      console.log(`[Lang] Detected by heuristic: ${lang}`);
       return lang;
     }
   }
 
-  // Fallback to Gemini API
   try {
-    const rawResponse = await geminiGenerate(`What language is this text written in? Reply with ONLY the 2-letter ISO 639-1 code. Examples: English=en, French=fr, Spanish=es, Arabic=ar, Hausa=ha, Yoruba=yo, Swahili=sw\n\nText: "${text.substring(0, 300)}"`);
-    console.log(`[Genblaze] Gemini raw response: "${rawResponse}"`);
+    const rawResponse = await geminiGenerate(
+      `What language is this text? Reply with ONLY the 2-letter ISO 639-1 code.\n\nText: "${text.substring(0, 300)}"`,
+    );
     const code = rawResponse.toLowerCase().replace(/[^a-z]/g, '').substring(0, 2);
     if (code && code.length === 2) {
-      console.log(`[Genblaze] Language detected by Gemini: ${code}`);
+      console.log(`[Lang] Detected by Gemini: ${code}`);
       return code;
     }
   } catch (e) {
-    console.error('[Genblaze] Gemini language detection failed:', e);
+    console.error('[Lang] Gemini detection failed:', e);
   }
 
-  console.log('[Genblaze] Defaulting to English');
   return 'en';
-};
-
-/**
- * Step 1: Generate a detailed campaign description from the user's short prompt.
- * The user might type "organic skincare" or "restaurant promo" - we expand it into
- * a rich description that gives the AI enough context to generate great content.
- */
-const generateDetailedDescription = async (userPrompt: string, language: string): Promise<string> => {
-  const langName = LANG_NAMES[language] || 'English';
-  try {
-    const result = await geminiGenerate(`CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language.
-
-The user wants to create a marketing campaign. Their prompt is: "${userPrompt}"
-
-Expand this into a detailed campaign brief (200-400 words) that includes:
-1. What the product/service is (be specific)
-2. Key features and benefits
-3. Target audience
-4. What makes it unique/special
-5. Suggested promotional angle or offer
-6. The vibe/mood of the brand
-
-Write it as a natural paragraph in ${langName}. Be creative but stay true to what the user described.`);
-    if (result.length > 50) {
-      console.log(`[Genblaze] Expanded description (${result.split(' ').length} words, ${language})`);
-      return result;
-    }
-  } catch (e) {
-    console.error('[Gemini] Description expansion failed:', e);
-  }
-  return userPrompt;
-};
-
-const generateCampaignTitle = async (description: string, language: string): Promise<string> => {
-  const langName = LANG_NAMES[language] || 'English';
-  try {
-    const result = await geminiGenerate(`CRITICAL: You MUST write your entire response in ${langName}. Do NOT write in any other language. You are a world-class copywriter. Output ONLY the title.
-
-Create ONE powerful, catchy campaign title (max 6 words) for this marketing campaign:
-
-"${description.substring(0, 500)}"
-
-Rules: Write in ${langName}. No quotes, no period, create urgency, make it memorable.`);
-    return result || description.substring(0, 40);
-  } catch (e) {
-    console.error('[Gemini] Title failed:', e);
-    return description.substring(0, 40);
-  }
-};
-
-/**
- * Generate a campaign poster image using AI.
- * 1. OpenAI writes a detailed visual prompt based on the user's product
- * 2. fal.ai Flux Pro generates the image (if available)
- * 3. Falls back to Pollinations.ai (free) if fal.ai fails
- * 4. Uploads to Backblaze B2
- */
-const generatePosterImage = async (title: string, description: string, campaignId: string, language: string): Promise<string> => {
-  console.log(`[Genblaze] Generating image with Gemini...`);
-  try {
-    const imageBuffer = await geminiGenerateImage(
-      `Generate a professional marketing poster image for this campaign:
-
-TITLE: "${title}"
-DESCRIPTION: ${description.substring(0, 600)}
-
-Create a visually striking, high-quality marketing poster. The image should be:
-- Professional and eye-catching
-- Modern design with vibrant colors
-- Appropriate for social media (square format)
-- Visually compelling that makes people want to stop scrolling
-- No text or words in the image - just the visual scene`
-    );
-
-    if (imageBuffer) {
-      console.log(`[Genblaze] Gemini image generated (${imageBuffer.length} bytes)`);
-      const b2Url = await uploadBuffer(
-        imageBuffer,
-        `campaigns/${campaignId}/poster_${Date.now()}.jpg`,
-        'image/jpeg'
-      );
-      console.log(`[Genblaze] Saved to B2: ${b2Url}`);
-      return b2Url;
-    }
-
-    // Retry with simpler prompt
-    console.log(`[Genblaze] No image returned, retrying with simpler prompt...`);
-    const retryBuffer = await geminiGenerateImage(
-      `Generate a beautiful, colorful marketing poster image for: ${title}. Make it vibrant and professional.`
-    );
-
-    if (retryBuffer) {
-      console.log(`[Genblaze] Gemini retry image generated (${retryBuffer.length} bytes)`);
-      const b2Url = await uploadBuffer(
-        retryBuffer,
-        `campaigns/${campaignId}/poster_${Date.now()}.jpg`,
-        'image/jpeg'
-      );
-      console.log(`[Genblaze] Saved to B2: ${b2Url}`);
-      return b2Url;
-    }
-
-    throw new Error('Gemini did not return an image');
-  } catch (e: any) {
-    console.error('[Gemini] Image generation failed:', e?.message || e);
-    throw e;
-  }
-};
-
-/**
- * Generate a long, compelling social media caption using OpenAI.
- * The caption is directly about the user's specific product/service.
- */
-const generateCaption = async (title: string, description: string, language: string): Promise<string> => {
-  const langName = LANG_NAMES[language] || 'English';
-  try {
-    const caption = await geminiGenerate(`CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write a single word in any other language. This is a strict requirement.
-
-You are the world's #1 social media copywriter. You write captions for brands like Nike, Apple, and Coca-Cola that go viral and drive sales. Your captions are LONG (500-800 words), tell a compelling story, and make people want to buy.
-
-Write a POWERFUL, LONG-FORM social media caption (500-800 words) entirely in ${langName} for this campaign:
-
-CAMPAIGN TITLE: "${title}"
-PRODUCT/SERVICE DETAILS: ${description}
-
-Write the caption with this structure (ALL IN ${langName}):
-
-1. HOOK - First line that stops the scroll (question, bold statement, or surprising fact)
-2. STORY - 2-3 paragraphs about the product/service, why it exists, who it's for
-3. DETAILS - Specific features, ingredients, prices, discounts, locations
-4. BENEFITS - How this changes the customer's life
-5. SOCIAL PROOF - Quality, satisfaction, awards, trust
-6. URGENCY - Limited time, limited stock, exclusive deal
-7. CTA - Clear call to action (follow, visit, order, DM)
-8. HASHTAGS - 5-8 relevant trending hashtags
-
-RULES:
-- Write MINIMUM 500 words
-- EVERYTHING must be in ${langName}
-- Reference SPECIFIC details from the description
-- Use emojis strategically throughout
-- Feel personal and authentic
-- Use short paragraphs for readability
-- Include specific numbers, prices, or percentages
-- Make someone FEEL something and WANT to take action
-- No generic filler - every sentence must be about THIS specific product
-- Do NOT switch to English or any other language`);
-    console.log(`[Genblaze] Caption: ${caption.split(' ').length} words (${language})`);
-    return caption;
-  } catch (e) {
-    console.error('[Gemini] Caption failed:', e);
-    return '';
-  }
-};
-
-const generateStrategy = async (title: string, description: string, language: string): Promise<string> => {
-  const langName = LANG_NAMES[language] || 'English';
-  try {
-    const result = await geminiGenerate(`CRITICAL: You MUST write your ENTIRE response in ${langName}. Do NOT write in any other language. You are a world-class marketing strategist with 15 years of experience.
-
-Give 3 POWERFUL, SPECIFIC, ACTIONABLE marketing strategy tips entirely in ${langName} for THIS exact campaign:
-
-TITLE: "${title}"
-DESCRIPTION: ${description.substring(0, 500)}
-
-Each tip must be SPECIFIC to this product/service with concrete numbers, platforms, timing, and budget suggestions. Format as numbered list (1-3). Write EVERYTHING in ${langName}.`);
-    console.log(`[Genblaze] Strategy: ${result.split(' ').length} words (${language})`);
-    return result;
-  } catch (e) {
-    console.error('[Gemini] Strategy failed:', e);
-    return '';
-  }
 };
 
 export const generateCampaignAssets = async (campaignId: string) => {
   try {
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      include: { assets: true }
+      include: { assets: true },
     });
-
     if (!campaign) throw new Error('Campaign not found');
 
-    await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { status: 'generating' },
-    });
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'generating' } });
 
     const userPrompt = campaign.description || 'A great product';
 
-    // Step 1: Detect language from user's prompt
+    // Step 1: Detect language
     const language = await detectLanguage(userPrompt);
 
-    // Step 2: Generate detailed description from user's short prompt
-    const description = await generateDetailedDescription(userPrompt, language);
-    console.log(`[Genblaze] Description expanded to ${description.split(' ').length} words`);
+    // Step 2: Expand description
+    const langName = LANG_NAMES[language] || 'English';
+    let description: string;
+    try {
+      description = await geminiGenerate(`CRITICAL: Write your entire response in ${langName}.
+
+Expand this marketing campaign prompt into a detailed 200-400 word brief including: product details, features, target audience, unique selling points, promotional angle, brand vibe.
+
+User prompt: "${userPrompt}"`);
+      if (description.length < 50) description = userPrompt;
+    } catch {
+      description = userPrompt;
+    }
+    console.log(`[Genblaze] Description: ${description.split(' ').length} words (${language})`);
 
     // Step 3: Generate title
-    const title = await generateCampaignTitle(description, language);
+    let title: string;
+    try {
+      title = await geminiGenerate(`CRITICAL: Write in ${langName}. Output ONLY the title. Create ONE catchy campaign title (max 6 words) for: "${description.substring(0, 500)}". No quotes, no period.`);
+      if (!title) title = description.substring(0, 40);
+    } catch {
+      title = description.substring(0, 40);
+    }
     await prisma.campaign.update({ where: { id: campaignId }, data: { title, description } });
     console.log(`[Genblaze] Title: ${title}`);
 
     // Step 4 & 5: Generate image AND caption in parallel
-    console.log(`[Genblaze] Generating image and caption in parallel...`);
+    console.log('[Genblaze] Generating image and caption in parallel...');
     const [posterResult, captionResult] = await Promise.allSettled([
-      generatePosterImage(title, description, campaignId, language),
+      generatePosterImage(title, description, campaignId),
       generateCaption(title, description, language),
     ]);
 
     // Handle image
     let posterUrl = '';
-    if (posterResult.status === 'fulfilled') {
+    if (posterResult.status === 'fulfilled' && posterResult.value) {
       posterUrl = posterResult.value;
-      await prisma.generatedFile.create({
-        data: { campaignId, url: posterUrl, type: 'poster' }
-      });
+      await prisma.generatedFile.create({ data: { campaignId, url: posterUrl, type: 'poster' } });
       console.log(`[Genblaze] Image: ${posterUrl.substring(0, 80)}...`);
     } else {
-      console.error('[Genblaze] Image FAILED:', posterResult.reason);
+      console.error('[Genblaze] Image FAILED:', posterResult.status === 'rejected' ? posterResult.reason : 'empty');
     }
 
     // Handle caption
     let caption = captionResult.status === 'fulfilled' ? captionResult.value : '';
     if (!caption || caption.length < 50) {
-      // Retry caption generation if it was too short
-      console.log('[Genblaze] Caption too short, retrying...');
-      try {
-        caption = await generateCaption(title, description, language);
-      } catch {}
+      try { caption = await generateCaption(title, description, language); } catch {}
     }
     if (!caption || caption.length < 50) {
-      // Last resort: generate a basic caption in the correct language
-      try {
-        caption = await geminiGenerate(`Write in ${LANG_NAMES[language] || 'English'}. Write a 100-word social media caption about this product. Include emojis and hashtags.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`);
-        if (!caption) caption = `${title} - ${description.substring(0, 100)}`;
-      } catch {
-        caption = `${title} - ${description.substring(0, 100)}`;
-      }
+      caption = `${title} - ${description.substring(0, 100)}`;
     }
-    await prisma.generatedFile.create({
-      data: { campaignId, url: '', type: 'caption', content: caption }
-    });
+    await prisma.generatedFile.create({ data: { campaignId, url: '', type: 'caption', content: caption } });
     console.log(`[Genblaze] Caption: ${caption.split(' ').length} words`);
 
     // Step 6: Generate strategy
-    let suggestions = await generateStrategy(title, description, language);
-    if (!suggestions || suggestions.length < 20) {
-      // Retry strategy
-      console.log('[Genblaze] Strategy too short, retrying...');
-      try {
-        suggestions = await generateStrategy(title, description, language);
-      } catch {}
+    let strategy = '';
+    try {
+      strategy = await generateStrategy(title, description, language);
+    } catch {}
+    if (!strategy || strategy.length < 20) {
+      try { strategy = await generateStrategy(title, description, language); } catch {}
     }
-    if (!suggestions || suggestions.length < 20) {
-      // Last resort: basic strategy in correct language
-      try {
-        suggestions = await geminiGenerate(`Write 3 marketing tips in ${LANG_NAMES[language] || 'English'} for this product. Number them 1-3.\n\nProduct: ${title}\nDetails: ${description.substring(0, 300)}`);
-      } catch {
-        suggestions = '';
-      }
-    }
-    await prisma.generatedFile.create({
-      data: { campaignId, url: '', type: 'caption', content: `STRATEGY:${suggestions}` }
-    });
+    await prisma.generatedFile.create({ data: { campaignId, url: '', type: 'strategy', content: strategy } });
 
-    // Mark campaign as completed
-    await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { status: 'completed' },
-    });
+    // Mark completed
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'completed' } });
     console.log(`[Genblaze] Campaign ${campaignId} completed`);
 
-    // Step 7: Generate video in background
-    generateVideoInBackground(campaignId, title, description, posterUrl, language).catch(e => {
-      console.error('[Genblaze] Background video failed:', e);
-    });
-
+    // Step 7: Video in background
+    if (posterUrl) {
+      generateVideoInBackground(campaignId, title, description, posterUrl, language).catch(e => {
+        console.error('[Genblaze] Background video failed:', e?.message || e);
+      });
+    }
   } catch (error) {
     console.error(`[Genblaze] Campaign ${campaignId} FAILED:`, error);
-    await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { status: 'failed' },
-    });
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'failed' } });
   }
 };
 
 const generateVideoInBackground = async (
-  campaignId: string,
-  title: string,
-  description: string,
-  posterUrl: string,
-  language: string
+  campaignId: string, title: string, description: string, posterUrl: string, _language: string
 ) => {
-  const fs = require('fs');
-  console.log(`[Genblaze] Starting background video for ${campaignId}...`);
+  console.log(`[Video] Starting background video for ${campaignId}...`);
   try {
-    const videoResult = await createPromotionalVideo(title, description, posterUrl, language);
-    if (videoResult?.url) {
-      // If it's a local file path, read it and upload to B2
-      if (videoResult.url.startsWith('/')) {
-        const buffer = fs.readFileSync(videoResult.url);
-        const videoUrl = await uploadBuffer(buffer, `campaigns/${campaignId}/video_${Date.now()}.mp4`, 'video/mp4');
-        await prisma.generatedFile.create({
-          data: { campaignId, url: videoUrl, type: 'video' }
-        });
-        console.log(`[Genblaze] Video uploaded to B2: ${videoUrl.substring(0, 80)}...`);
-        // Clean up temp file
-        try { fs.unlinkSync(videoResult.url); } catch {}
-      } else {
-        const videoUrl = await uploadFromUrl(videoResult.url, `campaigns/${campaignId}/video_${Date.now()}.mp4`);
-        await prisma.generatedFile.create({
-          data: { campaignId, url: videoUrl, type: 'video' }
-        });
-        console.log(`[Genblaze] Video completed: ${videoUrl.substring(0, 80)}...`);
-      }
+    const videoResult = await createPromotionalVideo(title, description, posterUrl);
+    if (videoResult?.url && videoResult.url.startsWith('/')) {
+      const buffer = fs.readFileSync(videoResult.url);
+      const videoUrl = await uploadBuffer(buffer, `campaigns/${campaignId}/video_${Date.now()}.mp4`, 'video/mp4');
+      await prisma.generatedFile.create({ data: { campaignId, url: videoUrl, type: 'video' } });
+      console.log(`[Video] Uploaded to B2: ${videoUrl.substring(0, 80)}...`);
+      try { fs.unlinkSync(videoResult.url); } catch {}
     }
   } catch (e: any) {
-    console.error('[Genblaze] Video failed:', e?.message || e);
+    console.error('[Video] Failed:', e?.message || e);
   }
 };

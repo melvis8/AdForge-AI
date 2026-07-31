@@ -37,7 +37,7 @@ export const uploadFile = async (filePath: string, fileName: string): Promise<st
   
   if (!isB2Authorized) {
     // Return mock only as a last resort - callers should handle this
-    return `https://mock-storage.com/${fileName}`;
+    throw new Error('B2 not authorized - cannot upload file');
   }
 
   try {

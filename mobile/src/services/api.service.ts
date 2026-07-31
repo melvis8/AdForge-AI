@@ -1,98 +1,87 @@
 import { Platform } from 'react-native';
 
-// Switch between local dev and production:
-// - Local dev: use your computer's IP address (run `hostname -I` to find it)
-// - Production: use the Render deployed URL
-// Change this single variable to switch environments:
-const USE_LOCAL = false;
-
-const LOCAL_URL = 'http://192.168.1.183:3000/api'; // Your local IP
+// Auto-detect: local dev vs production
+// In dev, try local first; in production always use Render URL
+const IS_DEV = __DEV__;
+const LOCAL_IP = '192.168.1.130';
+const LOCAL_URL = `http://${LOCAL_IP}:4000/api`;
 const PRODUCTION_URL = 'https://adforge-api-hday.onrender.com/api';
 
-const API_URL = USE_LOCAL ? LOCAL_URL : PRODUCTION_URL;
-console.log(`[API] Using: ${API_URL}`);
+const API_URL = IS_DEV ? LOCAL_URL : PRODUCTION_URL;
+console.log(`[API] Mode: ${IS_DEV ? 'DEV' : 'PROD'} → ${API_URL}`);
 
-export const checkBackendHealth = async () => {
+const REQUEST_TIMEOUT = 30000;
+
+const fetchWithTimeout = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
   try {
-    const response = await fetch(`${API_URL}/health`);
-    return response.ok;
-  } catch (error) {
-    console.error('Health check failed:', error);
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+export const checkBackendHealth = async (): Promise<boolean> => {
+  try {
+    const res = await fetchWithTimeout(`${API_URL.replace('/api', '')}/api/health`);
+    const data = await res.json();
+    return data.status === 'ok';
+  } catch {
     return false;
   }
 };
 
-export const createCampaign = async (title: string, description: string) => {
-  const response = await fetch(`${API_URL}/campaigns`, {
+export const createCampaign = async (description: string): Promise<any> => {
+  const res = await fetchWithTimeout(`${API_URL}/campaigns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, description }),
+    body: JSON.stringify({ description }),
   });
-  if (!response.ok) throw new Error('Failed to create campaign');
-  return response.json();
+  if (!res.ok) throw new Error(`Failed to create campaign: ${res.status}`);
+  return res.json();
 };
 
-export const startGeneration = async (campaignId: string) => {
-  const response = await fetch(`${API_URL}/campaigns/${campaignId}/generate`, {
+export const generateCampaign = async (campaignId: string): Promise<any> => {
+  const res = await fetchWithTimeout(`${API_URL}/campaigns/${campaignId}/generate`, {
     method: 'POST',
   });
-  if (!response.ok) throw new Error('Failed to start generation');
-  return response.json();
+  if (!res.ok) throw new Error(`Failed to start generation: ${res.status}`);
+  return res.json();
 };
 
-export const getCampaign = async (campaignId: string) => {
-  const response = await fetch(`${API_URL}/campaigns/${campaignId}`);
-  if (!response.ok) throw new Error('Failed to fetch campaign');
-  return response.json();
+export const getCampaign = async (campaignId: string): Promise<any> => {
+  const res = await fetchWithTimeout(`${API_URL}/campaigns/${campaignId}`);
+  if (!res.ok) throw new Error(`Failed to get campaign: ${res.status}`);
+  return res.json();
 };
 
-export const uploadCampaignImages = async (campaignId: string, imageUris: string[]) => {
+export const listCampaigns = async (): Promise<any[]> => {
+  const res = await fetchWithTimeout(`${API_URL}/campaigns`);
+  if (!res.ok) throw new Error(`Failed to list campaigns: ${res.status}`);
+  return res.json();
+};
+
+export const uploadAudio = async (uri: string): Promise<string> => {
   const formData = new FormData();
-  imageUris.forEach((uri, index) => {
-    const filename = uri.split('/').pop() || `image_${index}.jpg`;
-    const match = /\.(\w+)$/.exec(filename);
-    const type = match ? `image/${match[1]}` : 'image/jpeg';
-    
-    formData.append('files', {
-      uri,
-      name: filename,
-      type,
-    } as any);
-  });
-
-  const response = await fetch(`${API_URL}/campaigns/${campaignId}/upload`, {
-    method: 'POST',
-    body: formData,
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
-  if (!response.ok) throw new Error('Failed to upload images');
-  return response.json();
-};
-
-export const uploadAudioForTranscription = async (audioUri: string): Promise<string> => {
-  const formData = new FormData();
-  const filename = audioUri.split('/').pop() || 'recording.m4a';
-  
   formData.append('audio', {
-    uri: audioUri,
-    name: filename,
+    uri,
     type: 'audio/m4a',
+    name: 'recording.m4a',
   } as any);
 
-  const response = await fetch(`${API_URL}/transcribe`, {
+  const res = await fetchWithTimeout(`${API_URL}/transcribe`, {
     method: 'POST',
     body: formData,
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
   });
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Transcription API error:', errorText);
-    throw new Error('Transcription failed: ' + errorText);
-  }
-  const data = await response.json();
+  if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
+  const data = await res.json();
   return data.text || '';
+};
+
+export const getOfflineTemplates = async (): Promise<any[]> => {
+  const res = await fetchWithTimeout(`${API_URL}/templates`);
+  if (!res.ok) throw new Error(`Failed to get templates: ${res.status}`);
+  return res.json();
 };

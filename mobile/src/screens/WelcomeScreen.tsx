@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, Animated, Image, useWindowDimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
@@ -11,7 +11,7 @@ export default function WelcomeScreen({ navigation }: Props) {
   const { width, height } = useWindowDimensions();
   const [offlineCampaigns, setOfflineCampaigns] = useState<OfflineCampaign[]>([]);
   const [showOffline, setShowOffline] = useState(false);
-  const fadeAnim = useState(new Animated.Value(0))[0];
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   const isSmallScreen = height < 700;
   const isTablet = width >= 768;
 
