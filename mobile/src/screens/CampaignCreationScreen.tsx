@@ -58,8 +58,7 @@ export default function CampaignCreationScreen({ navigation }: Props) {
 
     setIsLoading(true);
     try {
-      const promptTitle = description.length > 40 ? `${description.substring(0, 40)}...` : description;
-      const campaign = await createCampaign(promptTitle, description);
+      const campaign = await createCampaign(description);
       
       if (images.length > 0) {
         await uploadCampaignImages(campaign.id, images);

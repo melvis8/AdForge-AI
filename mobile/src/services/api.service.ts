@@ -80,6 +80,26 @@ export const uploadAudio = async (uri: string): Promise<string> => {
   return data.text || '';
 };
 
+export const startGeneration = generateCampaign;
+
+export const uploadCampaignImages = async (campaignId: string, uris: string[]): Promise<any> => {
+  const formData = new FormData();
+  uris.forEach((uri, i) => {
+    formData.append('files', {
+      uri,
+      type: 'image/jpeg',
+      name: `image_${i}.jpg`,
+    } as any);
+  });
+
+  const res = await fetchWithTimeout(`${API_URL}/campaigns/${campaignId}/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  return res.json();
+};
+
 export const getOfflineTemplates = async (): Promise<any[]> => {
   const res = await fetchWithTimeout(`${API_URL}/templates`);
   if (!res.ok) throw new Error(`Failed to get templates: ${res.status}`);
