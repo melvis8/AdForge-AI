@@ -139,24 +139,24 @@ const generatePosterImageNanoBanana = async (
       }
 
       // CRITICAL: This prompt must produce photorealistic output, not cartoon
-      const imagePrompt = `Create a photorealistic marketing flyer image. ${userImageBuffers.length > 0 ? 'Use the provided product images as reference and incorporate them naturally into the design.' : ''}
+      const imagePrompt = `A high-end commercial beauty advertisement photograph.
 
-SUBJECT: ${title}
-DETAILS: ${description.substring(0, 500)}
+${description.substring(0, 500)}
 
-STYLE REQUIREMENTS - THIS MUST LOOK LIKE A REAL PHOTOGRAPH:
-- Photorealistic, NOT illustrated, NOT cartoon, NOT anime, NOT manga
-- Professional commercial photography (like a real magazine advertisement)
-- Real human skin texture, pores, natural imperfections
-- Natural studio lighting with soft shadows
-- Shot on Canon EOS R5 or Sony A7R IV, 85mm f/1.4 lens
-- Shallow depth of field, bokeh background
-- Color grading like a professional fashion/beauty ad
-- High-resolution, sharp focus on subject
-- The image should be indistinguishable from a real photograph
-- NO text, NO watermarks, NO logos in the image
+CRITICAL REQUIREMENTS:
+- This is a REAL PHOTOGRAPH, not an illustration, drawing, cartoon, anime, or digital art
+- Hyperrealistic commercial photography quality
+- Professional studio or lifestyle lighting with soft shadows
+- Shot on Canon EOS R5, 85mm f/1.4 lens, shallow depth of field
+- Creamy bokeh background, sharp subject focus
+- Natural skin texture with visible pores, no plastic/airbrushed look
+- Color grading like a premium L'Oreal, Nivea, or Dove campaign
+- High resolution, crisp details, natural warm tones
 
-If depicting people: natural skin tones, realistic facial features, genuine expressions, proper anatomy. Think L'Oreal, Nivea, Dove campaign quality.`;
+If depicting people: natural skin tones, realistic facial features, genuine smile, proper anatomy, visible skin texture. Think professional beauty editorial photography for Vogue or Harper's Bazaar magazine.
+
+The image must be indistinguishable from a real photograph taken by a professional photographer.
+NO text, NO watermarks, NO logos, NO overlays.`;
 
       contents.push({ text: imagePrompt });
 
@@ -202,21 +202,25 @@ const generatePosterImagePollinations = async (
 
   // Build a detailed prompt that forces photorealistic output
   const visualPrompt = [
-    `photorealistic commercial advertisement photograph`,
+    `A high-end commercial beauty advertisement photograph`,
     `${title}`,
     `${description.substring(0, 300)}`,
-    `professional studio photography, natural lighting, real human skin texture`,
-    `shot on Canon EOS R5, 85mm lens, shallow depth of field`,
-    `like a real magazine advertisement for L'Oreal or Dove`,
-    `high resolution, sharp focus, natural colors, bokeh background`,
-    `NOT cartoon, NOT anime, NOT illustration, NOT painting`,
+    `hyperrealistic commercial photography, not illustration`,
+    `professional studio lighting, soft natural shadows`,
+    `shot on Canon EOS R5, 85mm f/1.4 lens, shallow depth of field`,
+    `creamy bokeh background, sharp subject focus`,
+    `natural skin texture, visible pores, realistic facial features`,
+    `color grading like L'Oreal or Dove campaign print ad`,
+    `indistinguishable from real professional photography`,
+    `high resolution, crisp details, warm natural tones`,
+    `no text, no watermarks, no logos, no overlays`,
   ].join('. ');
 
   const encodedPrompt = encodeURIComponent(visualPrompt);
   const seed = Math.floor(Math.random() * 999999);
 
   // Use higher resolution and seed for better quality
-  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${seed}&enhance=true&model=flux`;
+  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${seed}&enhance=true&model=flux-realism`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
