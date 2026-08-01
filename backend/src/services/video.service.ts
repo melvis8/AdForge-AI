@@ -1,79 +1,132 @@
-import { execFileSync } from 'child_process';
+import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import ffmpegPath from 'ffmpeg-static';
-import { downloadFromB2 } from './storage.service';
 
-interface VideoResult {
-  url: string;
-  projectId: string;
-}
+dotenv.config();
 
-export const createPromotionalVideo = async (
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+
+/**
+ * Generate a promotional video using Google Veo 3 via Gemini API.
+ * Returns the video as a Buffer, or throws on failure.
+ */
+export const generateVideo = async (
   title: string,
   description: string,
   posterUrl: string
-): Promise<VideoResult> => {
-  if (!posterUrl) throw new Error('No poster URL for video generation');
-  if (!ffmpegPath) throw new Error('ffmpeg-static binary not found');
+): Promise<Buffer | null> => {
+  if (!GEMINI_KEY) {
+    console.error('[Veo3] No GEMINI_API_KEY set');
+    return null;
+  }
 
-  console.log(`[Video] ffmpeg at: ${ffmpegPath}`);
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adforge-video-'));
-  const inputImage = path.join(tmpDir, 'input.jpg');
-  const outputVideo = path.join(tmpDir, 'output.mp4');
+  const prompt = `Create a compelling 8-second marketing video advertisement for: "${title}".
+
+${description.substring(0, 300)}
+
+Requirements:
+- Dynamic, eye-catching motion that would work for social media ads
+- Smooth camera movements, zoom effects
+- Professional, modern aesthetic
+- High energy, attention-grabbing
+- Suitable for Instagram/TikTok/YouTube ads`;
 
   try {
-    // Download poster — try B2 auth first, then direct fetch
-    console.log('[Video] Downloading poster...');
-    let buffer: Buffer;
-    if (posterUrl.includes('backblazeb2.com')) {
-      buffer = await downloadFromB2(posterUrl);
-    } else {
-      const response = await fetch(posterUrl);
-      if (!response.ok) throw new Error(`Poster download failed: ${response.status}`);
-      buffer = Buffer.from(await response.arrayBuffer());
+    console.log('[Veo3] Starting video generation...');
+    const startResponse = await fetch(
+      `${BASE_URL}/models/veo-3.1-generate-preview:predictLongRunning?key=${GEMINI_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instances: [{ prompt }],
+          parameters: {
+            aspectRatio: '9:16',
+            durationSeconds: 8,
+            sampleCount: 1,
+            personGeneration: 'allow_adult',
+            enhancePrompt: true,
+          },
+        }),
+      }
+    );
+
+    if (!startResponse.ok) {
+      const errText = await startResponse.text();
+      console.error(`[Veo3] Start failed (${startResponse.status}):`, errText.substring(0, 200));
+      return null;
     }
-    fs.writeFileSync(inputImage, buffer);
-    console.log(`[Video] Poster: ${buffer.length} bytes`);
 
-    // Ken Burns effect: 10s zoom + pan
-    const duration = 10;
-    const fps = 30;
-    const totalFrames = duration * fps;
-    const vf = [
-      'scale=1920:1920:force_original_aspect_ratio=increase,crop=1920:1920',
-      `zoompan=z='min(zoom+0.001,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1080x1080:fps=${fps}`,
-    ].join(',');
+    const startData = await startResponse.json() as any;
+    const operationName = startData.name;
+    if (!operationName) {
+      console.error('[Veo3] No operation name returned');
+      return null;
+    }
+    console.log(`[Veo3] Operation: ${operationName}`);
 
-    console.log('[Video] Generating...');
-    execFileSync(ffmpegPath, [
-      '-y',
-      '-loop', '1', '-i', inputImage,
-      '-vf', vf,
-      '-c:v', 'libx264',
-      '-t', String(duration),
-      '-pix_fmt', 'yuv420p',
-      '-preset', 'fast',
-      '-crf', '23',
-      outputVideo,
-    ], { timeout: 120000, stdio: 'pipe', maxBuffer: 50 * 1024 * 1024 });
+    // Poll for completion (max 5 minutes)
+    const maxPolls = 60;
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise(r => setTimeout(r, 5000));
 
-    const stats = fs.statSync(outputVideo);
-    console.log(`[Video] Created: ${stats.size} bytes`);
-    if (stats.size < 1000) throw new Error('Video too small');
+      const statusResponse = await fetch(
+        `${BASE_URL}/${operationName}?key=${GEMINI_KEY}`
+      );
 
-    // Clean up input
-    try { fs.unlinkSync(inputImage); } catch {}
-    try { fs.rmdirSync(tmpDir); } catch {}
+      if (!statusResponse.ok) {
+        console.error(`[Veo3] Poll failed (${statusResponse.status})`);
+        continue;
+      }
 
-    return { url: outputVideo, projectId: 'ffmpeg-static' };
+      const statusData = await statusResponse.json() as any;
+
+      if (statusData.done) {
+        if (statusData.error) {
+          console.error('[Veo3] Generation error:', JSON.stringify(statusData.error).substring(0, 200));
+          return null;
+        }
+
+        // Extract video download URI
+        const videoUri = statusData.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
+        if (!videoUri) {
+          console.error('[Veo3] No video URI in response');
+          return null;
+        }
+
+        console.log(`[Veo3] Video ready, downloading from URI...`);
+
+        // Download the video
+        const downloadResponse = await fetch(videoUri);
+        if (!downloadResponse.ok) {
+          console.error(`[Veo3] Download failed: ${downloadResponse.status}`);
+          return null;
+        }
+
+        const arrayBuffer = await downloadResponse.arrayBuffer();
+        const videoBuffer = Buffer.from(arrayBuffer);
+        console.log(`[Veo3] Downloaded: ${videoBuffer.length} bytes`);
+
+        if (videoBuffer.length < 1000) {
+          console.error('[Veo3] Video too small, likely corrupt');
+          return null;
+        }
+
+        return videoBuffer;
+      }
+
+      const elapsed = (i + 1) * 5;
+      if (i % 6 === 0) {
+        console.log(`[Veo3] Still generating... (${elapsed}s elapsed)`);
+      }
+    }
+
+    console.error('[Veo3] Timeout after 5 minutes');
+    return null;
   } catch (e: any) {
-    // Clean up on failure
-    try { fs.unlinkSync(inputImage); } catch {}
-    try { fs.unlinkSync(outputVideo); } catch {}
-    try { fs.rmdirSync(tmpDir); } catch {}
-    console.error('[Video] Failed:', e?.message || e);
-    throw e;
+    console.error('[Veo3] Error:', e?.message || e);
+    return null;
   }
 };

@@ -128,6 +128,20 @@ export const uploadCampaignImages = async (campaignId: string, uris: string[]): 
 
 export const getOfflineTemplates = async (): Promise<any[]> => {
   const res = await fetchWithTimeout(`${API_URL}/templates`);
-  if (!res.ok) throw new Error(`Failed to get templates: ${res.status}`);
+  if (!res.ok) throw new Error(`Failed to get templates`);
   return res.json();
+};
+
+export const generateTTSAudio = async (text: string, voice?: string): Promise<Blob | null> => {
+  try {
+    const res = await fetchWithTimeout(`${API_URL}/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: voice || 'Kore' }),
+    });
+    if (!res.ok) return null;
+    return res.blob();
+  } catch {
+    return null;
+  }
 };

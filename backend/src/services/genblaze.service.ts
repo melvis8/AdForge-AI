@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
-import { createPromotionalVideo } from './video.service';
-import { uploadFromUrl, uploadBuffer, downloadFromB2 } from './storage.service';
+import { generateVideo } from './video.service';
+import { uploadBuffer, downloadFromB2 } from './storage.service';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'fs';
 import dotenv from 'dotenv';
@@ -10,8 +10,10 @@ dotenv.config();
 const prisma = new PrismaClient();
 const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 
 const GEMINI_MODEL = 'gemini-2.0-flash';
+const NANO_BANANA_MODEL = 'gemini-2.5-flash-image';
 
 const LANG_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
@@ -67,7 +69,6 @@ export const geminiGenerate = async (prompt: string, retries = 3): Promise<strin
     }
   }
 
-  // Try OpenRouter with retries
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       return await openRouterGenerate(prompt);
@@ -80,32 +81,89 @@ export const geminiGenerate = async (prompt: string, retries = 3): Promise<strin
   throw lastError;
 };
 
-const generatePosterImage = async (title: string, description: string, campaignId: string): Promise<string> => {
-  console.log('[Image] Generating with Gemini...');
+/**
+ * Generate image using Nano Banana (Gemini native image generation).
+ * Supports user-uploaded reference images for flyer/logo integration.
+ */
+const generatePosterImage = async (
+  title: string,
+  description: string,
+  campaignId: string,
+  userImageUrls: string[] = []
+): Promise<string> => {
+  console.log(`[Image] Generating with Nano Banana (user images: ${userImageUrls.length})...`);
 
-  // Try Gemini native image generation first
   try {
+    // Build content with optional user reference images
+    const contents: any[] = [];
+
+    // If user provided images (logo/product photos), include them as reference
+    if (userImageUrls.length > 0) {
+      for (const imageUrl of userImageUrls.slice(0, 3)) {
+        try {
+          let imageBuffer: Buffer;
+          if (imageUrl.includes('backblazeb2.com')) {
+            imageBuffer = await downloadFromB2(imageUrl);
+          } else if (imageUrl.startsWith('/api/files/')) {
+            const fileName = imageUrl.replace('/api/files/', '');
+            const rawUrl = `https://f005.backblazeb2.com/file/${process.env.B2_BUCKET_NAME}/${fileName}`;
+            imageBuffer = await downloadFromB2(rawUrl);
+          } else {
+            const resp = await fetch(imageUrl);
+            if (!resp.ok) continue;
+            imageBuffer = Buffer.from(await resp.arrayBuffer());
+          }
+
+          contents.push({
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: imageBuffer.toString('base64'),
+            },
+          });
+        } catch (e: any) {
+          console.log(`[Image] Could not load user image: ${e?.message}`);
+        }
+      }
+    }
+
+    // Text prompt for image generation
+    const imagePrompt = userImageUrls.length > 0
+      ? `Generate a stunning professional marketing flyer/poster image for: "${title}".
+${description.substring(0, 400)}
+IMPORTANT: The user has provided reference images (product photos, logos). Incorporate their product/brand naturally into the design. The flyer should look like a real professional ad.
+Style: vibrant colors, modern clean design, eye-catching, high-quality commercial photography feel. NO text overlays — the caption will be separate.`
+      : `Generate a stunning professional marketing poster/flyer image for: "${title}".
+${description.substring(0, 400)}
+Style: vibrant colors, modern clean design, eye-catching, high-quality commercial photography feel, studio lighting, professional product showcase. NO text overlays — the caption will be separate.`;
+
+    contents.push({ text: imagePrompt });
+
     const response = await gemini.models.generateContent({
-      model: 'gemini-2.5-flash-preview-image-generation',
-      contents: `Generate a professional marketing poster image for: "${title}". ${description.substring(0, 400)}. Vibrant colors, modern design, no text in the image.`,
+      model: NANO_BANANA_MODEL,
+      contents,
       config: { responseModalities: ['TEXT', 'IMAGE'] },
     });
-    const parts = response.candidates?.[0]?.content?.parts || [];
+
+    const parts = (response as any).candidates?.[0]?.content?.parts || [];
     for (const part of parts) {
       if (part.inlineData?.data) {
         const buf = Buffer.from(part.inlineData.data, 'base64');
-        console.log(`[Image] Gemini generated ${buf.length} bytes`);
-        const b2Url = await uploadBuffer(buf, `campaigns/${campaignId}/poster_${Date.now()}.jpg`, 'image/jpeg');
-        return b2Url;
+        if (buf.length > 500) {
+          console.log(`[Image] Nano Banana generated ${buf.length} bytes`);
+          const b2Url = await uploadBuffer(buf, `campaigns/${campaignId}/poster_${Date.now()}.jpg`, 'image/jpeg');
+          return b2Url;
+        }
       }
     }
   } catch (e: any) {
-    console.log('[Image] Gemini image failed, using Pollinations:', e?.message?.substring(0, 80));
+    console.log('[Image] Nano Banana failed:', e?.message?.substring(0, 120));
   }
 
-  // Fallback: Pollinations.ai (free, no API key)
-  console.log('[Image] Using Pollinations.ai (free)...');
-  const visualPrompt = `Professional marketing poster for ${title}. ${description.substring(0, 200)}. Vibrant colors, modern design, studio lighting, high quality, no text.`;
+  // Fallback: Pollinations.ai (free, unlimited)
+  console.log('[Image] Falling back to Pollinations.ai...');
+  const visualPrompt = userImageUrls.length > 0
+    ? `Professional marketing flyer for ${title}. Incorporating product photos and brand logos. ${description.substring(0, 200)}. Vibrant, modern, commercial quality, no text.`
+    : `Professional marketing poster for ${title}. ${description.substring(0, 200)}. Vibrant colors, modern design, studio lighting, high quality, no text.`;
   const encodedPrompt = encodeURIComponent(visualPrompt);
   const seed = Math.floor(Math.random() * 999999);
   const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?nologo=1&width=1024&height=1024&seed=${seed}&enhance=true`;
@@ -174,8 +232,6 @@ Each tip must be SPECIFIC with concrete numbers, platforms, timing, and budget. 
 const detectLanguage = async (text: string): Promise<string> => {
   const lower = text.toLowerCase();
 
-  // ONLY distinctive words — words that are unambiguously one language
-  // No shared words between languages (e.g. "produit" removed because it's similar in FR/PT)
   const langDistinctive: Record<string, RegExp> = {
     fr: /\b(bonjour|merci|s'il vous plaît|beauté|cosmétique|soin|crème|sérum|visage|peau|cheveux|corps|bien-être|alimentation|naturel|café|hôtel|voyage|vêtement|jardin|nouveau|nouvelle|excellent|meilleur|spécial|c'est|très|je|nous|vous|ils|elles|mon|ton|son|fait|peut|elle|leur|quel|quelle|aujourd'hui|maintenant)\b/i,
     es: /\b(hola|gracias|por favor|belleza|cosmético|cuidado|crema|serum|rostro|piel|cabello|cuerpo|salud|bienestar|alimentación|restaurante|viaje|moda|ropa|jardín|niño|nuevo|nueva|excelente|mejor|también|puede|tiene|hace|desde|hasta|está|ser|hay|más|pero|como|este|esta|eso)\b/i,
@@ -200,13 +256,11 @@ const detectLanguage = async (text: string): Promise<string> => {
     return bestLang;
   }
 
-  // Non-Latin scripts
   if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
   if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) return 'ja';
   if (/[\uac00-\ud7af]/.test(text)) return 'ko';
   if (/[؟،]/.test(text)) return 'ar';
 
-  // Fallback to Gemini
   try {
     const rawResponse = await geminiGenerate(
       `What language is this text? Reply with ONLY the 2-letter ISO 639-1 code.\n\nText: "${text.substring(0, 300)}"`,
@@ -264,10 +318,16 @@ User prompt: "${userPrompt}"`);
     await prisma.campaign.update({ where: { id: campaignId }, data: { title, description } });
     console.log(`[Genblaze] Title: ${title}`);
 
+    // Get user-uploaded image URLs from assets
+    const userImageUrls = campaign.assets
+      .filter(a => a.type === 'image' && a.url)
+      .map(a => a.url);
+    console.log(`[Genblaze] User images: ${userImageUrls.length}`);
+
     // Step 4 & 5: Generate image AND caption in parallel
     console.log('[Genblaze] Generating image and caption in parallel...');
     const [posterResult, captionResult] = await Promise.allSettled([
-      generatePosterImage(title, description, campaignId),
+      generatePosterImage(title, description, campaignId, userImageUrls),
       generateCaption(title, description, language),
     ]);
 
@@ -306,9 +366,9 @@ User prompt: "${userPrompt}"`);
     await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'completed' } });
     console.log(`[Genblaze] Campaign ${campaignId} completed`);
 
-    // Step 7: Video in background
+    // Step 7: Veo 3 video in background
     if (posterUrl) {
-      generateVideoInBackground(campaignId, title, description, posterUrl, language).catch(e => {
+      generateVideoInBackground(campaignId, title, description, posterUrl, language, userImageUrls).catch(e => {
         console.error('[Genblaze] Background video failed:', e?.message || e);
       });
     }
@@ -319,22 +379,22 @@ User prompt: "${userPrompt}"`);
 };
 
 const generateVideoInBackground = async (
-  campaignId: string, title: string, description: string, posterUrl: string, _language: string
+  campaignId: string, title: string, description: string, posterUrl: string, _language: string, userImageUrls: string[] = []
 ) => {
-  console.log(`[Video] Starting background video for ${campaignId}...`);
+  console.log(`[Video] Starting Veo 3 video for ${campaignId}...`);
   try {
-    // posterUrl may be a proxy URL (/api/files/...) — convert to raw B2 URL for video service
+    // Resolve poster URL to raw B2 URL for Veo
     let rawPosterUrl = posterUrl;
     if (posterUrl.startsWith('/api/files/')) {
       const fileName = posterUrl.replace('/api/files/', '');
       rawPosterUrl = `https://f005.backblazeb2.com/file/${process.env.B2_BUCKET_NAME}/${fileName}`;
     }
 
-    const videoResult = await createPromotionalVideo(title, description, rawPosterUrl);
-    if (videoResult?.url && videoResult.url.startsWith('/')) {
-      const buffer = fs.readFileSync(videoResult.url);
+    const videoResult = await generateVideo(title, description, rawPosterUrl);
+
+    if (videoResult) {
       try {
-        const videoUrl = await uploadBuffer(buffer, `campaigns/${campaignId}/video_${Date.now()}.mp4`, 'video/mp4');
+        const videoUrl = await uploadBuffer(videoResult, `campaigns/${campaignId}/video_${Date.now()}.mp4`, 'video/mp4');
         await prisma.generatedFile.create({ data: { campaignId, url: videoUrl, type: 'video' } });
         console.log(`[Video] Uploaded to B2: ${videoUrl}`);
       } catch (uploadErr) {
@@ -344,7 +404,6 @@ const generateVideoInBackground = async (
         await prisma.generatedFile.create({ data: { campaignId, url: localUrl, type: 'video' } });
         console.log(`[Video] Saved as fallback: ${localUrl}`);
       }
-      try { fs.unlinkSync(videoResult.url); } catch {}
     }
   } catch (e: any) {
     console.error('[Video] Failed:', e?.message || e);

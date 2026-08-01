@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { generateCampaignAssets } from '../services/genblaze.service';
-import { transcribeAudioFile } from '../services/transcription.service';
+import { transcribeAudioFile, textToSpeech } from '../services/transcription.service';
 import { uploadFile } from '../services/storage.service';
 import fs from 'fs';
 
@@ -128,5 +128,30 @@ export const transcribeAudio = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[Controller] Transcription error:', error);
     res.status(500).json({ error: 'Failed to transcribe audio' });
+  }
+};
+
+export const generateSpeech = async (req: Request, res: Response) => {
+  try {
+    const { text, voice } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: 'No text provided' });
+    }
+
+    console.log(`[Controller] TTS for ${text.length} chars (voice: ${voice || 'Kore'})`);
+    const audioBuffer = await textToSpeech(text, voice || 'Kore');
+
+    if (!audioBuffer) {
+      return res.status(500).json({ error: 'TTS generation failed' });
+    }
+
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': String(audioBuffer.length),
+    });
+    res.status(200).send(audioBuffer);
+  } catch (error) {
+    console.error('[Controller] TTS error:', error);
+    res.status(500).json({ error: 'Failed to generate speech' });
   }
 };

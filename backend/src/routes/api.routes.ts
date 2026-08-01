@@ -5,7 +5,8 @@ import {
   startGeneration,
   getCampaign,
   getOfflineTemplates,
-  transcribeAudio
+  transcribeAudio,
+  generateSpeech
 } from '../controllers/campaign.controller';
 import { downloadB2File } from '../controllers/b2-proxy.controller';
 import multer from 'multer';
@@ -39,7 +40,10 @@ router.get('/campaigns/:id', getCampaign);
 // Get offline templates
 router.get('/templates/offline', getOfflineTemplates);
 
-// Transcribe audio
+// Transcribe audio (AssemblyAI + Gemini fallback)
 router.post('/transcribe', upload.single('audio'), transcribeAudio);
+
+// Text-to-speech (Gemini TTS)
+router.post('/tts', generateSpeech);
 
 export default router;
