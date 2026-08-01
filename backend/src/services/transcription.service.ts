@@ -65,7 +65,7 @@ export const transcribeAudioFile = async (filePath: string): Promise<string> => 
       const mimeType = mimeMap[ext] || 'audio/x-caf';
 
       const response = await gemini.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         contents: [
           {
             inlineData: {

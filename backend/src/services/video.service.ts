@@ -7,21 +7,17 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const gemini = GEMINI_KEY ? new GoogleGenAI({ apiKey: GEMINI_KEY }) : null;
 
 /**
- * Generate a promotional video using Google Veo 3 via the Gemini SDK.
+ * Generate a promotional video using Google Veo 3.
+ * Uses SDK to start the operation, then REST to poll (SDK polling is broken in v2.13).
  * Returns the video as a Buffer, or null on failure.
- *
- * Flow:
- * 1. Call generateVideos → returns an Operation with a name
- * 2. Poll operations.get(name) until done
- * 3. Download video from the URI in the response
  */
 export const generateVideo = async (
   title: string,
   description: string,
   posterUrl: string
 ): Promise<Buffer | null> => {
-  if (!gemini) {
-    console.error('[Veo3] No Gemini client available');
+  if (!gemini || !GEMINI_KEY) {
+    console.error('[Veo3] No Gemini client or API key');
     return null;
   }
 
@@ -37,7 +33,7 @@ Requirements:
 - Suitable for Instagram Reels / TikTok / YouTube Shorts`;
 
   try {
-    console.log('[Veo3] Starting video generation via SDK...');
+    console.log('[Veo3] Starting video generation...');
     const operation = await gemini.models.generateVideos({
       model: 'veo-3.1-generate-preview',
       prompt,
@@ -54,13 +50,25 @@ Requirements:
     }
     console.log(`[Veo3] Operation: ${operationName}`);
 
-    // Poll the operation until done (max 5 minutes)
+    // Poll using REST (SDK operations.get is broken in v2.13)
     const maxPolls = 60;
     for (let i = 0; i < maxPolls; i++) {
       await new Promise(r => setTimeout(r, 5000));
 
       try {
-        const status = await gemini.operations.get(operationName) as any;
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${GEMINI_KEY}`
+        );
+        const status = await resp.json() as any;
+
+        if (!resp.ok) {
+          if (resp.status === 429) {
+            console.error('[Veo3] Rate limited during polling');
+            return null;
+          }
+          console.error(`[Veo3] Poll error: ${resp.status}`);
+          continue;
+        }
 
         if (status.done) {
           if (status.error) {

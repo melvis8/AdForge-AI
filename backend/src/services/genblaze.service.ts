@@ -13,7 +13,7 @@ const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 
 const gemini = GEMINI_KEY ? new GoogleGenAI({ apiKey: GEMINI_KEY }) : null;
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const NANO_BANANA_MODEL = 'gemini-2.5-flash-image';
 const NANO_BANANA_PRO_MODEL = 'gemini-3-pro-image-preview';
 
