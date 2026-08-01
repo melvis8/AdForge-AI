@@ -6,10 +6,11 @@ dotenv.config();
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const gemini = GEMINI_KEY ? new GoogleGenAI({ apiKey: GEMINI_KEY }) : null;
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
- * Generate a promotional video using Google Veo 3.
- * Uses SDK to start the operation, then REST to poll (SDK polling is broken in v2.13).
- * Returns the video as a Buffer, or null on failure.
+ * Try Gemini Omni Flash first (simpler, faster, $0.10/sec).
+ * Falls back to Veo 3.1 if Omni Flash is unavailable.
  */
 export const generateVideo = async (
   title: string,
@@ -17,7 +18,7 @@ export const generateVideo = async (
   posterUrl: string
 ): Promise<Buffer | null> => {
   if (!gemini || !GEMINI_KEY) {
-    console.error('[Veo3] No Gemini client or API key');
+    console.error('[Video] No Gemini client or API key');
     return null;
   }
 
@@ -32,9 +33,66 @@ Requirements:
 - High energy, attention-grabbing visual style
 - Suitable for Instagram Reels / TikTok / YouTube Shorts`;
 
+  // Try Omni Flash first (uses generateContent with VIDEO modality)
+  const omniResult = await tryOmniFlash(prompt);
+  if (omniResult) return omniResult;
+
+  // Fallback to Veo 3.1 (uses generateVideos + polling)
+  console.log('[Video] Omni Flash unavailable, trying Veo 3.1...');
+  const veoResult = await tryVeo3(prompt);
+  if (veoResult) return veoResult;
+
+  console.error('[Video] All video generation methods failed');
+  return null;
+};
+
+/**
+ * Gemini Omni Flash: text-to-video via generateContent with VIDEO responseModalities.
+ * Simpler API, no polling needed — returns video directly.
+ */
+const tryOmniFlash = async (prompt: string): Promise<Buffer | null> => {
+  try {
+    console.log('[Omni Flash] Starting video generation...');
+    const r = await gemini!.models.generateContent({
+      model: 'gemini-omni-flash-preview',
+      contents: prompt,
+      config: {
+        responseModalities: ['VIDEO'],
+        videoConfig: { durationSeconds: 8, resolution: '720p' },
+      } as any,
+    });
+
+    const parts = (r as any).candidates?.[0]?.content?.parts || [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        const buf = Buffer.from(part.inlineData.data, 'base64');
+        if (buf.length > 1000) {
+          console.log(`[Omni Flash] Generated ${buf.length} bytes`);
+          return buf;
+        }
+      }
+    }
+    console.error('[Omni Flash] No video in response');
+    return null;
+  } catch (e: any) {
+    const msg = e?.message || '';
+    if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+      console.error('[Omni Flash] Quota exhausted');
+    } else {
+      console.error('[Omni Flash] Error:', msg.substring(0, 200));
+    }
+    return null;
+  }
+};
+
+/**
+ * Veo 3.1: text-to-video via generateVideos + REST polling.
+ * Higher quality but requires async polling.
+ */
+const tryVeo3 = async (prompt: string): Promise<Buffer | null> => {
   try {
     console.log('[Veo3] Starting video generation...');
-    const operation = await gemini.models.generateVideos({
+    const operation = await gemini!.models.generateVideos({
       model: 'veo-3.1-generate-preview',
       prompt,
       config: {
@@ -45,7 +103,7 @@ Requirements:
 
     const operationName = (operation as any).name;
     if (!operationName) {
-      console.error('[Veo3] No operation name returned');
+      console.error('[Veo3] No operation name');
       return null;
     }
     console.log(`[Veo3] Operation: ${operationName}`);
@@ -53,7 +111,7 @@ Requirements:
     // Poll using REST (SDK operations.get is broken in v2.13)
     const maxPolls = 60;
     for (let i = 0; i < maxPolls; i++) {
-      await new Promise(r => setTimeout(r, 5000));
+      await sleep(5000);
 
       try {
         const resp = await fetch(
@@ -66,19 +124,18 @@ Requirements:
             console.error('[Veo3] Rate limited during polling');
             return null;
           }
-          console.error(`[Veo3] Poll error: ${resp.status}`);
           continue;
         }
 
         if (status.done) {
           if (status.error) {
-            console.error('[Veo3] Generation error:', JSON.stringify(status.error).substring(0, 200));
+            console.error('[Veo3] Error:', JSON.stringify(status.error).substring(0, 200));
             return null;
           }
 
           const videoUri = status.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
           if (!videoUri) {
-            console.error('[Veo3] No video URI in response');
+            console.error('[Veo3] No video URI');
             return null;
           }
 
@@ -92,17 +149,11 @@ Requirements:
           const arrayBuffer = await downloadResponse.arrayBuffer();
           const videoBuffer = Buffer.from(arrayBuffer);
           console.log(`[Veo3] Downloaded: ${videoBuffer.length} bytes`);
-
-          if (videoBuffer.length < 1000) {
-            console.error('[Veo3] Video too small');
-            return null;
-          }
-
-          return videoBuffer;
+          return videoBuffer.length > 1000 ? videoBuffer : null;
         }
 
         if (i % 6 === 0) {
-          console.log(`[Veo3] Still generating... (${(i + 1) * 5}s elapsed)`);
+          console.log(`[Veo3] Still generating... (${(i + 1) * 5}s)`);
         }
       } catch (pollErr: any) {
         console.error(`[Veo3] Poll error: ${pollErr?.message?.substring(0, 100)}`);
@@ -114,7 +165,7 @@ Requirements:
   } catch (e: any) {
     const msg = e?.message || '';
     if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
-      console.error('[Veo3] Rate limited — quota exhausted. Video will be skipped.');
+      console.error('[Veo3] Quota exhausted');
     } else {
       console.error('[Veo3] Error:', msg.substring(0, 200));
     }
