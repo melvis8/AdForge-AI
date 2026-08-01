@@ -16,12 +16,21 @@
       "bundleIdentifier": "com.melvis8.adforgeai"
     },
     "android": {
+      "package": "com.melvis8.adforgeai",
       "adaptiveIcon": {
         "backgroundColor": "#0f172a",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.CAMERA"
+      ]
+    },
       "package": "com.melvis8.mobile",
       "permissions": [
         "android.permission.RECORD_AUDIO",
@@ -50,7 +59,10 @@
           "microphonePermission": "Allow AdForge AI to record audio for voice-to-text campaign prompts."
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-file-system",
+      "expo-sharing",
+      "expo-linear-gradient"
     ],
     "owner": "najela_melvis"
   }

@@ -1,15 +1,17 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
-// Auto-detect: local dev vs production
-// In dev, try local first; in production always use Render URL
-const IS_DEV = __DEV__;
+// Detect if running in an EAS build (preview/production) vs Expo Go dev
+const isEasBuild = Constants.expoConfig?.extra?.eas?.projectId != null;
+const IS_PROD = !__DEV__ || isEasBuild;
+
 const LOCAL_IP = '192.168.1.130';
 const LOCAL_URL = `http://${LOCAL_IP}:4000/api`;
 const PRODUCTION_URL = 'https://adforge-api-hday.onrender.com/api';
 
-const API_URL = IS_DEV ? LOCAL_URL : PRODUCTION_URL;
+const API_URL = IS_PROD ? PRODUCTION_URL : LOCAL_URL;
 const API_BASE = API_URL.replace(/\/api$/, '');
-console.log(`[API] Mode: ${IS_DEV ? 'DEV' : 'PROD'} → ${API_URL}`);
+console.log(`[API] Mode: ${IS_PROD ? 'PROD' : 'DEV'} → ${API_URL}`);
 
 /**
  * Resolve a file URL — proxy paths (/api/files/...) get full base URL prepended

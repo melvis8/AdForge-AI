@@ -11,7 +11,7 @@ const prisma = new PrismaClient();
 const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 const LANG_NAMES: Record<string, string> = {
   en: 'English', fr: 'French', es: 'Spanish', de: 'German', pt: 'Portuguese',
@@ -338,10 +338,11 @@ const generateVideoInBackground = async (
         await prisma.generatedFile.create({ data: { campaignId, url: videoUrl, type: 'video' } });
         console.log(`[Video] Uploaded to B2: ${videoUrl}`);
       } catch (uploadErr) {
-        console.error('[Video] B2 upload failed, serving video from backend:', (uploadErr as Error).message);
-        const localUrl = `http://localhost:4000/api/campaigns/${campaignId}/video`;
+        console.error('[Video] B2 upload failed:', (uploadErr as Error).message);
+        const renderUrl = 'https://adforge-api-hday.onrender.com';
+        const localUrl = `${renderUrl}/api/campaigns/${campaignId}/video`;
         await prisma.generatedFile.create({ data: { campaignId, url: localUrl, type: 'video' } });
-        console.log(`[Video] Saved as local fallback: ${localUrl}`);
+        console.log(`[Video] Saved as fallback: ${localUrl}`);
       }
       try { fs.unlinkSync(videoResult.url); } catch {}
     }

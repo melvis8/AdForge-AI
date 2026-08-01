@@ -11,7 +11,10 @@ import { downloadB2File } from '../controllers/b2-proxy.controller';
 import multer from 'multer';
 
 const router = Router();
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 25 * 1024 * 1024, files: 10 },
+});
 
 // Health check
 router.get('/health', (_req, res) => {
